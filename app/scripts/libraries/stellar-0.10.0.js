@@ -58,53 +58,15 @@ var stellar =
 	exports.Seed             = __webpack_require__(10).Seed;
 	exports.Meta             = __webpack_require__(11).Meta;
 	exports.SerializedObject = __webpack_require__(12).SerializedObject;
-	exports.RippleError      = __webpack_require__(13).RippleError;
-	exports.Message          = __webpack_require__(14).Message;
-	exports.VaultClient      = __webpack_require__(15).VaultClient;
-	exports.AuthInfo         = __webpack_require__(16).AuthInfo;
-	exports.RippleTxt        = __webpack_require__(17).RippleTxt;
-	exports.binformat        = __webpack_require__(18);
-	exports.utils            = __webpack_require__(19);
-	exports.Server           = __webpack_require__(20).Server;
+	exports.StellarError      = __webpack_require__(13).StellarError;
+	exports.StellarTxt        = __webpack_require__(14).StellarTxt;
+	exports.binformat        = __webpack_require__(15);
+	exports.utils            = __webpack_require__(16);
+	exports.Server           = __webpack_require__(17).Server;
 
-	// Important: We do not guarantee any specific version of SJCL or for any
-	// specific features to be included. The version and configuration may change at
-	// any time without warning.
-	//
-	// However, for programs that are tied to a specific version of ripple.js like
-	// the official client, it makes sense to expose the SJCL instance so we don't
-	// have to include it twice.
-	exports.sjcl   = __webpack_require__(19).sjcl;
+	exports.sjcl             = __webpack_require__(28);
 
-	exports.config = __webpack_require__(21);
-
-	// camelCase to under_scored API conversion
-	function attachUnderscored(c) {
-	  var o = exports[c];
-
-	  Object.keys(o.prototype).forEach(function(key) {
-	    var UPPERCASE = /([A-Z]{1})[a-z]+/g;
-
-	    if (!UPPERCASE.test(key)) {
-	      return;
-	    }
-
-	    var underscored = key.replace(UPPERCASE, function(c) {
-	      return '_' + c.toLowerCase();
-	    });
-
-	    o.prototype[underscored] = o.prototype[key];
-	  });
-	};
-
-	[ 'Remote',
-	  'Request',
-	  'Transaction',
-	  'Account',
-	  'Server'
-	].forEach(attachUnderscored);
-
-	// vim:sw=2:sts=2:ts=8:et
+	exports.config = __webpack_require__(18);
 
 
 /***/ },
@@ -126,33 +88,30 @@ var stellar =
 	// YYY Will later provide js/network.js which will transparently use multiple
 	// instances of this class for network access.
 
-	var EventEmitter = __webpack_require__(36).EventEmitter;
-	var util         = __webpack_require__(37);
-	var LRU          = __webpack_require__(47);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
+	var util         = __webpack_require__(29);
+	var LRU          = __webpack_require__(38);
 	var Request      = __webpack_require__(2).Request;
-	var Server       = __webpack_require__(20).Server;
+	var Server       = __webpack_require__(17).Server;
 	var Amount       = __webpack_require__(3).Amount;
 	var Currency     = __webpack_require__(6).Currency;
 	var UInt160      = __webpack_require__(8).UInt160;
 	var Transaction  = __webpack_require__(5).Transaction;
 	var Account      = __webpack_require__(4).Account;
 	var Meta         = __webpack_require__(11).Meta;
-	var OrderBook    = __webpack_require__(22).OrderBook;
-	var PathFind     = __webpack_require__(23).PathFind;
-	var RippleError  = __webpack_require__(13).RippleError;
-	var utils        = __webpack_require__(19);
-	var sjcl         = __webpack_require__(19).sjcl;
-	var config       = __webpack_require__(21);
-	var log          = __webpack_require__(24).internal.sub('remote');
+	var OrderBook    = __webpack_require__(19).OrderBook;
+	var PathFind     = __webpack_require__(20).PathFind;
+	var StellarError  = __webpack_require__(13).StellarError;
+	var utils        = __webpack_require__(16);
+	var config       = __webpack_require__(18);
 
 	/**
-	 *    Interface to manage the connection to a Ripple server.
+	 *    Interface to manage the connection to a Stellar server.
 	 *
 	 *    This implementation uses WebSockets.
 	 *
 	 *    Keys for opts:
 	 *
-	 *      trace
 	 *      max_listeners      : Set maxListeners for remote; prevents EventEmitter warnings
 	 *      connection_offset  : Connect to remote servers on supplied interval (in seconds)
 	 *      trusted            : truthy, if remote is trusted
@@ -182,10 +141,9 @@ var stellar =
 	 *                          globally in the network.
 	 *
 	 *    @param opts      Connection options.
-	 *    @param trace
 	 */
 
-	function Remote(opts, trace) {
+	function Remote(opts) {
 	  EventEmitter.call(this);
 
 	  var self = this;
@@ -209,7 +167,6 @@ var stellar =
 
 	  this._stand_alone = void(0);
 	  this._testnet = void(0);
-	  this.trace = Boolean(opts.trace);
 
 	  this._transaction_subs = 0;
 	  this._connection_count = 0;
@@ -272,10 +229,6 @@ var stellar =
 	    throw new TypeError('Remote "fee_cushion" configuration is not a Number');
 	  }
 
-	  if (!/^(undefined|boolean)$/.test(typeof opts.trace)) {
-	    throw new TypeError('Remote "trace" configuration is not a Boolean');
-	  }
-
 	  if (typeof this.local_signing !== 'boolean') {
 	    throw new TypeError('Remote "local_signing" configuration is not a Boolean');
 	  }
@@ -327,7 +280,7 @@ var stellar =
 	  function listenerAdded(type, listener) {
 	    if (type === 'transaction_all') {
 	      if (!self._transaction_subs && self._connected) {
-	        self.request_subscribe('transactions').request();
+	        self.requestSubscribe('transactions').request();
 	      }
 	      self._transaction_subs += 1;
 	    }
@@ -339,7 +292,7 @@ var stellar =
 	    if (type === 'transaction_all') {
 	      self._transaction_subs -= 1;
 	      if (!self._transaction_subs && self._connected) {
-	        self.request_unsubscribe('transactions').request();
+	        self.requestUnsubscribe('transactions').request();
 	      }
 	    }
 	  };
@@ -383,20 +336,20 @@ var stellar =
 	    Sell:            0x00020000  // True, offer was placed as a sell.
 	  },
 
-	  // Ripple State
+	  // Stellar State
 	  state: {
 	    LowReserve:      0x00010000, // True, if entry counts toward reserve.
 	    HighReserve:     0x00020000,
 	    LowAuth:         0x00040000,
 	    HighAuth:        0x00080000,
-	    LowNoRipple:     0x00100000,
-	    HighNoRipple:    0x00200000
+	    LowNoStellar:     0x00100000,
+	    HighNoStellar:    0x00200000
 	  }
 	};
 
-	Remote.from_config = function(obj, trace) {
+	Remote.from_config = function(obj) {
 	  var serverConfig = (typeof obj === 'string') ? config.servers[obj] : obj;
-	  var remote = new Remote(serverConfig, trace);
+	  var remote = new Remote(serverConfig);
 
 	  function initializeAccount(account) {
 	    var accountInfo = config.accounts[account];
@@ -468,10 +421,6 @@ var stellar =
 
 	Remote.prototype._setState = function(state) {
 	  if (this.state !== state) {
-	    if (this.trace) {
-	      log.info('set_state:', state);
-	    }
-
 	    this.state = state;
 	    this.emit('state', state);
 
@@ -498,23 +447,6 @@ var stellar =
 
 	Remote.prototype.setServerFatal = function() {
 	  this._server_fatal = true;
-	};
-
-	/**
-	 * Enable debug output
-	 *
-	 * @param {Boolean} trace
-	 */
-
-	Remote.prototype.setTrace = function(trace) {
-	  this.trace = (trace === void(0) || trace);
-	  return this;
-	};
-
-	Remote.prototype._trace = function() {
-	  if (this.trace) {
-	    log.info.apply(log, arguments);
-	  }
 	};
 
 	/**
@@ -602,7 +534,7 @@ var stellar =
 	};
 
 	/**
-	 * Connect to the Ripple network.
+	 * Connect to the Stellar network.
 	 *
 	 * @param {Function} callback
 	 * @api public
@@ -640,7 +572,7 @@ var stellar =
 	};
 
 	/**
-	 * Disconnect from the Ripple network.
+	 * Disconnect from the Stellar network.
 	 *
 	 * @param {Function} callback
 	 * @api public
@@ -685,7 +617,7 @@ var stellar =
 
 	  if (!Remote.isValidMessage(message)) {
 	    // Unexpected response from remote.
-	    this.emit('error', new RippleError('remoteUnexpected', 'Unexpected response from remote'));
+	    this.emit('error', new StellarError('remoteUnexpected', 'Unexpected response from remote'));
 	    return;
 	  }
 
@@ -703,9 +635,6 @@ var stellar =
 	      this._handlePathFind(message);
 	      break;
 	    default:
-	      if (this.trace) {
-	        log.info(message.type + ': ', message);
-	      }
 	      break;
 	  }
 	};
@@ -767,10 +696,6 @@ var stellar =
 
 	  if (message.validated) {
 	    this._received_tx.set(transactionHash, true);
-	  }
-
-	  if (this.trace) {
-	    log.info('tx:', message);
 	  }
 
 	  function notify(el) {
@@ -983,7 +908,7 @@ var stellar =
 
 	  if (ledger) {
 	    // DEPRECATED: use .ledger_hash() or .ledger_index()
-	    //console.log('request_ledger: ledger parameter is deprecated');
+	    //console.log('requestLedger: ledger parameter is deprecated');
 	    request.message.ledger = ledger;
 	  }
 
@@ -1008,9 +933,6 @@ var stellar =
 
 	    default:
 	      //DEPRECATED
-	      if (this.trace) {
-	        log.info('request_ledger: full parameter is deprecated');
-	      }
 	      request.message.full = true;
 	      break;
 	  }
@@ -1083,20 +1005,20 @@ var stellar =
 	  //
 	  // Transparent caching:
 	  if (type === 'account_root') {
-	    request.request_default = request.request;
+	    request.requestDefault = request.request;
 
 	    request.request = function() {                        // Intercept default request.
 	      var bDefault  = true;
 	      // .self = Remote
 	      // this = Request
 
-	      // console.log('request_ledger_entry: caught');
+	      // console.log('requestLedgerEntry: caught');
 
 	      //if (self._ledger_hash) {
 	        // A specific ledger is requested.
 	        // XXX Add caching.
 	        // else if (req.ledger_index)
-	        // else if ('ripple_state' === request.type)         // YYY Could be cached per ledger.
+	        // else if ('stellar_state' === request.type)         // YYY Could be cached per ledger.
 	      //}
 
 	      if (!self._ledger_hash && type === 'account_root') {
@@ -1110,7 +1032,7 @@ var stellar =
 
 	        if (node) {
 	          // Emulate fetch of ledger entry.
-	          // console.log('request_ledger_entry: emulating');
+	          // console.log('requestLedgerEntry: emulating');
 	          // YYY Missing lots of fields.
 	          request.emit('success', { node: node });
 	          bDefault  = false;
@@ -1120,21 +1042,21 @@ var stellar =
 	            case 'account_root':
 	              request.once('success', function(message) {
 	                // Cache node.
-	                // console.log('request_ledger_entry: caching');
+	                // console.log('requestLedgerEntry: caching');
 	                self.ledgers.current.account_root[message.node.Account] = message.node;
 	              });
 	              break;
 
 	            default:
 	              // This type not cached.
-	              // console.log('request_ledger_entry: non-cached type');
+	              // console.log('requestLedgerEntry: non-cached type');
 	          }
 	        }
 	      }
 
 	      if (bDefault) {
-	        // console.log('request_ledger_entry: invoking');
-	        request.request_default();
+	        // console.log('requestLedgerEntry: invoking');
+	        request.requestDefault();
 	      }
 	    };
 	  }
@@ -1287,7 +1209,7 @@ var stellar =
 	/**
 	 * Request account_info
 	 *
-	 * @param {String} ripple address
+	 * @param {String} stellar address
 	 * @param [Function] callback
 	 * @return {Request}
 	 */
@@ -1300,7 +1222,7 @@ var stellar =
 	/**
 	 * Request account_currencies
 	 *
-	 * @param {String} ripple address
+	 * @param {String} stellar address
 	 * @param [Function] callback
 	 * @return {Request}
 	 */
@@ -1313,7 +1235,7 @@ var stellar =
 	/**
 	 * Request account_lines
 	 *
-	 * @param {String} ripple address
+	 * @param {String} stellar address
 	 * @param {Number] sub-account index
 	 * @param [String|Number] ledger
 	 * @param [String] peer
@@ -1331,7 +1253,7 @@ var stellar =
 	/**
 	 * Request account_offers
 	 *
-	 * @param {String} ripple address
+	 * @param {String} stellar address
 	 * @param {Number] sub-account index
 	 * @param [String|Number] ledger
 	 * @param [String] peer
@@ -1646,16 +1568,6 @@ var stellar =
 	    self._stand_alone = !!message.stand_alone;
 	    self._testnet = !!message.testnet;
 
-	    if (typeof message.random === 'string') {
-	      var rand = message.random.match(/[0-9A-F]{8}/ig);
-
-	      while (rand && rand.length) {
-	        sjcl.random.addEntropy(parseInt(rand.pop(), 16));
-	      }
-
-	      self.emit('random', utils.hexToArray(message.random));
-	    }
-
 	    if (message.ledger_hash && message.ledger_index) {
 	      self._ledger_time = message.ledger_time;
 	      self._ledger_hash = message.ledger_hash;
@@ -1687,7 +1599,7 @@ var stellar =
 	Remote.prototype.ledgerAccept =
 	Remote.prototype.requestLedgerAccept = function(callback) {
 	  if (!this._stand_alone) {
-	    this.emit('error', new RippleError('notStandAlone'));
+	    this.emit('error', new StellarError('notStandAlone'));
 	    return;
 	  }
 
@@ -2032,7 +1944,7 @@ var stellar =
 	 * @return {Request}
 	 */
 
-	Remote.prototype.requestRippleBalance = function(account, issuer, currency, ledger, callback) {
+	Remote.prototype.requestStellarBalance = function(account, issuer, currency, ledger, callback) {
 	  if (typeof account === 'object') {
 	    var options = account;
 	    callback = issuer;
@@ -2042,12 +1954,12 @@ var stellar =
 	    account  = options.account;
 	  }
 
-	  var request = this.requestLedgerEntry('ripple_state'); // YYY Could be cached per ledger.
+	  var request = this.requestLedgerEntry('stellar_state'); // YYY Could be cached per ledger.
 
-	  request.rippleState(account, issuer, currency);
+	  request.stellarState(account, issuer, currency);
 	  request.ledgerChoose(ledger);
 
-	  function rippleState(message) {
+	  function stellarState(message) {
 	    var node            = message.node;
 	    var lowLimit        = Amount.from_json(node.LowLimit);
 	    var highLimit       = Amount.from_json(node.HighLimit);
@@ -2056,12 +1968,12 @@ var stellar =
 	    // accountHigh implies: for account: balance is negated, highLimit is the limit set by account.
 	    var accountHigh     = UInt160.from_json(account).equals(highLimit.issuer());
 
-	    request.emit('ripple_state', {
-	      account_balance     : ( accountHigh ? balance.negate() : balance.clone()).parse_issuer(account),
-	      peer_balance        : (!accountHigh ? balance.negate() : balance.clone()).parse_issuer(issuer),
+	    request.emit('stellar_state', {
+	      account_balance     : ( accountHigh ? balance.negate() : balance.copy()).parse_issuer(account),
+	      peer_balance        : (!accountHigh ? balance.negate() : balance.copy()).parse_issuer(issuer),
 
-	      account_limit       : ( accountHigh ? highLimit : lowLimit).clone().parse_issuer(issuer),
-	      peer_limit          : (!accountHigh ? highLimit : lowLimit).clone().parse_issuer(account),
+	      account_limit       : ( accountHigh ? highLimit : lowLimit).copy().parse_issuer(issuer),
+	      peer_limit          : (!accountHigh ? highLimit : lowLimit).copy().parse_issuer(account),
 
 	      account_quality_in  : ( accountHigh ? node.HighQualityIn : node.LowQualityIn),
 	      peer_quality_in     : (!accountHigh ? node.HighQualityIn : node.LowQualityIn),
@@ -2071,8 +1983,8 @@ var stellar =
 	    });
 	  };
 
-	  request.once('success', rippleState);
-	  request.callback(callback, 'ripple_state');
+	  request.once('success', stellarState);
+	  request.callback(callback, 'stellar_state');
 
 	  return request;
 	};
@@ -2099,7 +2011,7 @@ var stellar =
 	 * @return {Request}
 	 */
 
-	Remote.prototype.requestRipplePathFind = function(src_account, dst_account, dst_amount, src_currencies, callback) {
+	Remote.prototype.requestStellarPathFind = function(src_account, dst_account, dst_amount, src_currencies, callback) {
 	  if (typeof src_account === 'object') {
 	    var options = src_account;
 	    callback       = dst_account;
@@ -2392,12 +2304,12 @@ var stellar =
 /* 2 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var EventEmitter = __webpack_require__(36).EventEmitter;
-	var util         = __webpack_require__(37);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
+	var util         = __webpack_require__(29);
 	var UInt160      = __webpack_require__(8).UInt160;
 	var Currency     = __webpack_require__(6).Currency;
-	var RippleError  = __webpack_require__(13).RippleError;
-	var Server       = __webpack_require__(20).Server;
+	var StellarError  = __webpack_require__(13).StellarError;
+	var Server       = __webpack_require__(17).Server;
 
 	// Request events emitted:
 	//  'success' : Request successful.
@@ -2467,8 +2379,8 @@ var stellar =
 	    if (!called) {
 	      called = true;
 
-	      if (!(error instanceof RippleError)) {
-	        error = new RippleError(error);
+	      if (!(error instanceof StellarError)) {
+	        error = new StellarError(error);
 	      }
 
 	      callback.call(self, error);
@@ -2556,7 +2468,7 @@ var stellar =
 	  if (build) {
 	    this.message.build_path = true;
 	  } else {
-	    // ND: rippled currently intreprets the mere presence of `build_path` as the
+	    // ND: stellard currently intreprets the mere presence of `build_path` as the
 	    // value being `truthy`
 	    delete this.message.build_path;
 	  }
@@ -2658,8 +2570,8 @@ var stellar =
 	  return this;
 	};
 
-	Request.prototype.rippleState = function(account, issuer, currency) {
-	  this.message.ripple_state = {
+	Request.prototype.stellarState = function(account, issuer, currency) {
+	  this.message.stellar_state = {
 	    currency : currency,
 	    accounts : [
 	      UInt160.json_rewrite(account),
@@ -2762,14 +2674,13 @@ var stellar =
 /* 3 */
 /***/ function(module, exports, __webpack_require__) {
 
-	// Represent Ripple amounts and currencies.
+	// Represent Stellar amounts and currencies.
 	// - Numbers in hex are big-endian.
 
-	var utils = __webpack_require__(19);
-	var sjcl  = utils.sjcl;
-	var bn    = sjcl.bn;
+	var utils = __webpack_require__(16);
+	var sjcl  = __webpack_require__(28);
 
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
 	var UInt160  = __webpack_require__(8).UInt160;
 	var Seed     = __webpack_require__(10).Seed;
@@ -3138,7 +3049,7 @@ var stellar =
 	 * @param {Amount} denominator The denominator (bottom half) of the fraction.
 	 * @param opts Options for the calculation.
 	 * @param opts.reference_date {Date|Number} Date based on which demurrage/interest
-	 *   should be applied. Can be given as JavaScript Date or int for Ripple epoch.
+	 *   should be applied. Can be given as JavaScript Date or int for Stellar epoch.
 	 * @return {Amount} The resulting ratio. Unit will be the same as numerator.
 	 */
 	Amount.prototype.ratio_human = function(denominator, opts) {
@@ -3204,7 +3115,7 @@ var stellar =
 	 * @param {Amount} factor The second factor of the product.
 	 * @param opts Options for the calculation.
 	 * @param opts.reference_date {Date|Number} Date based on which demurrage/interest
-	 *   should be applied. Can be given as JavaScript Date or int for Ripple epoch.
+	 *   should be applied. Can be given as JavaScript Date or int for Stellar epoch.
 	 * @return {Amount} The product. Unit will be the same as the first factor.
 	 */
 	Amount.prototype.product_human = function(factor, opts) {
@@ -3405,7 +3316,7 @@ var stellar =
 	      precision = fraction.length;
 
 	      this._is_native = false;
-	      var multiplier  = consts.bi_10.clone().pow(precision);
+	      var multiplier  = consts.bi_10.pow(precision);
 	      this._value     = this._value.multiply(multiplier).add(new BigInteger(fraction));
 	      this._offset    = -precision;
 
@@ -3472,7 +3383,7 @@ var stellar =
 	 *   demurrage has to be applied when the quality is decoded, otherwise the
 	 *   price will be false.
 	 * @param opts.reference_date {Date|Number} Date based on which demurrage/interest
-	 *   should be applied. Can be given as JavaScript Date or int for Ripple epoch.
+	 *   should be applied. Can be given as JavaScript Date or int for Stellar epoch.
 	 * @param opts.xrp_as_drops {Boolean} Whether XRP amount should be treated as
 	 *   drops. When the base currency is XRP, the quality is calculated in drops.
 	 *   For human use however, we want to think of 1000000 drops as 1 XRP and
@@ -3658,7 +3569,7 @@ var stellar =
 	        var fraction  = new BigInteger(d[3]);
 	        var precision = d[3].length;
 
-	        this._value       = integer.multiply(consts.bi_10.clone().pow(precision)).add(fraction);
+	        this._value       = integer.multiply(consts.bi_10.pow(precision)).add(fraction);
 	        this._offset      = -precision;
 	        this._is_negative = !!d[1];
 
@@ -3754,7 +3665,7 @@ var stellar =
 	 * intended by display functions such as toHuman().
 	 *
 	 * @param referenceDate {Date|Number} Date based on which demurrage/interest
-	 *   should be applied. Can be given as JavaScript Date or int for Ripple epoch.
+	 *   should be applied. Can be given as JavaScript Date or int for Stellar epoch.
 	 * @return {Amount} The amount with interest applied.
 	 */
 	Amount.prototype.applyInterest = function(referenceDate) {
@@ -3798,7 +3709,7 @@ var stellar =
 	 * @param opts.signed {Boolean|String} Whether negative numbers will have a
 	 *   prefix. If String, that string will be used as the prefix. Default: '-'
 	 * @param opts.reference_date {Date|Number} Date based on which demurrage/interest
-	 *   should be applied. Can be given as JavaScript Date or int for Ripple epoch.
+	 *   should be applied. Can be given as JavaScript Date or int for Stellar epoch.
 	 */
 	Amount.prototype.to_human = function(opts) {
 	  opts = opts || {};
@@ -3824,7 +3735,7 @@ var stellar =
 	  }
 
 	  var order         = ref._is_native ? consts.xns_precision : -ref._offset;
-	  var denominator   = consts.bi_10.clone().pow(order);
+	  var denominator   = consts.bi_10.pow(order);
 	  var int_part      = ref._value.divide(denominator).toString();
 	  var fraction_part = ref._value.mod(denominator).toString();
 
@@ -4000,14 +3911,14 @@ var stellar =
 	//
 
 	// var network = require('./network.js');
-	var async              = __webpack_require__(48);
-	var util               = __webpack_require__(37);
-	var extend             = __webpack_require__(43);
-	var EventEmitter       = __webpack_require__(36).EventEmitter;
+	var async              = __webpack_require__(39);
+	var util               = __webpack_require__(29);
+	var extend             = __webpack_require__(32);
+	var EventEmitter       = __webpack_require__(30).EventEmitter;
 	var Amount             = __webpack_require__(3).Amount;
 	var UInt160            = __webpack_require__(8).UInt160;
-	var TransactionManager = __webpack_require__(25).TransactionManager;
-	var sjcl               = __webpack_require__(19).sjcl;
+	var TransactionManager = __webpack_require__(21).TransactionManager;
+	var sjcl               = __webpack_require__(28);
 	var Base               = __webpack_require__(7).Base;
 
 	/**
@@ -4033,8 +3944,8 @@ var stellar =
 	  function listenerAdded(type, listener) {
 	    if (~Account.subscribeEvents.indexOf(type)) {
 	      if (!self._subs && self._remote._connected) {
-	        self._remote.request_subscribe()
-	        .add_account(self._account_id)
+	        self._remote.requestSubscribe()
+	        .addAccount(self._account_id)
 	        .broadcast();
 	      }
 	      self._subs += 1;
@@ -4047,8 +3958,8 @@ var stellar =
 	    if (~Account.subscribeEvents.indexOf(type)) {
 	      self._subs -= 1;
 	      if (!self._subs && self._remote._connected) {
-	        self._remote.request_unsubscribe()
-	        .add_account(self._account_id)
+	        self._remote.requestUnsubscribe()
+	        .addAccount(self._account_id)
 	        .broadcast();
 	      }
 	    }
@@ -4058,7 +3969,7 @@ var stellar =
 
 	  function attachAccount(request) {
 	    if (self._account.is_valid() && self._subs) {
-	      request.add_account(self._account_id);
+	      request.addAccount(self._account_id);
 	    }
 	  };
 
@@ -4122,7 +4033,7 @@ var stellar =
 	 */
 
 	Account.prototype.getInfo = function(callback) {
-	  return this._remote.request_account_info(this._account_id, callback);
+	  return this._remote.requestAccountInfo(this._account_id, callback);
 	};
 
 	/**
@@ -4179,7 +4090,7 @@ var stellar =
 	};
 
 	/**
-	 * Retrieve this account's Ripple trust lines.
+	 * Retrieve this account's Stellar trust lines.
 	 *
 	 * To keep up-to-date with changes to the AccountRoot entry, subscribe to the
 	 * 'lines' event. (Not yet implemented.)
@@ -4210,7 +4121,7 @@ var stellar =
 	 * Retrieve this account's single trust line.
 	 *
 	 * @param {string} currency Currency
-	 * @param {string} address Ripple address
+	 * @param {string} address Stellar address
 	 * @param {function(err, line)} callback Called with the result
 	 * @returns {Account}
 	 */
@@ -4287,7 +4198,7 @@ var stellar =
 	/**
 	 *  Check whether the given public key is valid for this account
 	 *
-	 *  @param {Hex-encoded String|RippleAddress} public_key
+	 *  @param {Hex-encoded String|StellarAddress} public_key
 	 *  @param {Function} callback
 	 *
 	 *  @callback
@@ -4354,15 +4265,15 @@ var stellar =
 	};
 
 	/**
-	 *  Convert a hex-encoded public key to a Ripple Address
+	 *  Convert a hex-encoded public key to a Stellar Address
 	 *
 	 *  @static
 	 *
-	 *  @param {Hex-encoded string|RippleAddress} public_key
-	 *  @returns {RippleAddress}
+	 *  @param {Hex-encoded string|StellarAddress} public_key
+	 *  @returns {StellarAddress}
 	 */
 	Account._publicKeyToAddress = function(public_key) {
-	  // Based on functions in /src/js/ripple/keypair.js
+	  // Based on functions in /src/js/stellar/keypair.js
 	  function hexToUInt160(public_key) {
 	    var bits = sjcl.codec.hex.toBits(public_key);
 	    var hash = sjcl.hash.ripemd160.hash(sjcl.hash.sha256.hash(bits));
@@ -4372,7 +4283,7 @@ var stellar =
 	    return address.to_json();
 	  };
 
-	  if (UInt160.is_valid(public_key)) {
+	  if (UInt160.isValid(public_key)) {
 	    return public_key;
 	  } else if (/^[0-9a-fA-F]+$/.test(public_key)) {
 	    return hexToUInt160(public_key);
@@ -4434,18 +4345,18 @@ var stellar =
 	//   - may or may not forward.
 	//
 
-	var EventEmitter     = __webpack_require__(36).EventEmitter;
-	var util             = __webpack_require__(37);
-	var utils            = __webpack_require__(19);
-	var sjcl             = __webpack_require__(19).sjcl;
+	var EventEmitter     = __webpack_require__(30).EventEmitter;
+	var util             = __webpack_require__(29);
+	var utils            = __webpack_require__(16);
+	var sjcl             = __webpack_require__(28);
 	var Amount           = __webpack_require__(3).Amount;
 	var Currency         = __webpack_require__(3).Currency;
 	var UInt160          = __webpack_require__(3).UInt160;
 	var Seed             = __webpack_require__(10).Seed;
 	var SerializedObject = __webpack_require__(12).SerializedObject;
-	var RippleError      = __webpack_require__(13).RippleError;
-	var hashprefixes     = __webpack_require__(27);
-	var config           = __webpack_require__(21);
+	var StellarError      = __webpack_require__(13).StellarError;
+	var hashprefixes     = __webpack_require__(22);
+	var config           = __webpack_require__(18);
 
 	function Transaction(remote) {
 	  EventEmitter.call(this);
@@ -4530,8 +4441,8 @@ var stellar =
 
 	  TrustSet: {
 	    SetAuth:            0x00010000,
-	    NoRipple:           0x00020000,
-	    ClearNoRipple:      0x00040000
+	    NoStellar:           0x00020000,
+	    ClearNoStellar:      0x00040000
 	  },
 
 	  OfferCreate: {
@@ -4542,7 +4453,7 @@ var stellar =
 	  },
 
 	  Payment: {
-	    NoRippleDirect:     0x00010000,
+	    NoStellarDirect:     0x00010000,
 	    PartialPayment:     0x00020000,
 	    LimitQuality:       0x00040000
 	  }
@@ -4560,7 +4471,7 @@ var stellar =
 	  }
 	};
 
-	Transaction.formats = __webpack_require__(18).tx;
+	Transaction.formats = __webpack_require__(15).tx;
 
 	Transaction.prototype.consts = {
 	  telLOCAL_ERROR:  -399,
@@ -4637,11 +4548,11 @@ var stellar =
 	/**
 	 * Returns the number of fee units this transaction will cost.
 	 *
-	 * Each Ripple transaction based on its type and makeup costs a certain number
+	 * Each Stellar transaction based on its type and makeup costs a certain number
 	 * of fee units. The fee units are calculated on a per-server basis based on the
 	 * current load on both the network and the server.
 	 *
-	 * @see https://ripple.com/wiki/Transaction_Fee
+	 * @see https://stellar.com/wiki/Transaction_Fee
 	 *
 	 * @return {Number} Number of fee units for this transaction.
 	 */
@@ -4701,14 +4612,14 @@ var stellar =
 	Transaction.prototype.complete = function() {
 	  if (this.remote) {
 	    if (!this.remote.trusted && !this.remote.local_signing) {
-	      this.emit('error', new RippleError('tejServerUntrusted', 'Attempt to give secret to untrusted server'));
+	      this.emit('error', new StellarError('tejServerUntrusted', 'Attempt to give secret to untrusted server'));
 	      return false;
 	    }
 	  }
 
 	  // Try to auto-fill the secret
 	  if (!this._secret && !(this._secret = this._accountSecret(this.tx_json.Account))) {
-	    this.emit('error', new RippleError('tejSecretUnknown', 'Missing secret'));
+	    this.emit('error', new StellarError('tejSecretUnknown', 'Missing secret'));
 	    return false;
 	  }
 
@@ -4718,7 +4629,7 @@ var stellar =
 	      var key  = seed.get_key();
 	      this.tx_json.SigningPubKey = key.to_hex_pub();
 	    } catch(e) {
-	      this.emit('error', new RippleError('tejSecretInvalid', 'Invalid secret'));
+	      this.emit('error', new StellarError('tejSecretInvalid', 'Invalid secret'));
 	      return false;
 	    }
 	  }
@@ -4728,14 +4639,14 @@ var stellar =
 	  if (this.remote && typeof this.tx_json.Fee === 'undefined') {
 	    if (this.remote.local_fee || !this.remote.trusted) {
 	      if (!(this.tx_json.Fee = this._computeFee())) {
-	        this.emit('error', new RippleError('tejUnconnected'));
+	        this.emit('error', new StellarError('tejUnconnected'));
 	        return;
 	      }
 	    }
 	  }
 
 	  if (Number(this.tx_json.Fee) > this._maxFee) {
-	    this.emit('error', new RippleError('tejMaxFeeExceeded', 'Max fee exceeded'));
+	    this.emit('error', new StellarError('tejMaxFeeExceeded', 'Max fee exceeded'));
 	    return false;
 	  }
 
@@ -4989,7 +4900,7 @@ var stellar =
 	    if (transaction_flags.hasOwnProperty(flag)) {
 	      this.tx_json.Flags += transaction_flags[flag];
 	    } else {
-	      return this.emit('error', new RippleError('tejInvalidFlag'));
+	      return this.emit('error', new StellarError('tejInvalidFlag'));
 	    }
 	  }
 
@@ -5153,7 +5064,7 @@ var stellar =
 	  this.tx_json.TakerGets       = Amount.json_rewrite(taker_gets);
 
 	  if (expiration) {
-	    this.tx_json.Expiration = utils.time.toRipple(expiration);
+	    this.tx_json.Expiration = utils.time.toStellar(expiration);
 	  }
 
 	  if (cancel_sequence) {
@@ -5168,7 +5079,7 @@ var stellar =
 	 *  If the RegularKey is set, the private key that corresponds to
 	 *  it can be used to sign transactions instead of the master key
 	 *
-	 *  The RegularKey must be a valid Ripple Address, or a Hash160 of
+	 *  The RegularKey must be a valid Stellar Address, or a Hash160 of
 	 *  the public key corresponding to the new private signing key.
 	 */
 
@@ -5184,7 +5095,7 @@ var stellar =
 	  }
 
 	  if (!UInt160.is_valid(regular_key)) {
-	    throw new Error('RegularKey must be a valid Ripple Address (a Hash160 of the public key)');
+	    throw new Error('RegularKey must be a valid Stellar Address (a Hash160 of the public key)');
 	  }
 
 	  this.tx_json.TransactionType = 'SetRegularKey';
@@ -5236,7 +5147,7 @@ var stellar =
 	};
 
 	Transaction.prototype.trustSet =
-	Transaction.prototype.rippleLineSet = function(src, limit, quality_in, quality_out) {
+	Transaction.prototype.stellarLineSet = function(src, limit, quality_in, quality_out) {
 	  if (typeof src === 'object') {
 	    var options = src;
 	    quality_out = options.quality_out;
@@ -5276,8 +5187,8 @@ var stellar =
 	  this.callback = (typeof callback === 'function') ? callback : function(){};
 
 	  function transactionError(error, message) {
-	    if (!(error instanceof RippleError)) {
-	      error = new RippleError(error, message);
+	    if (!(error instanceof StellarError)) {
+	      error = new StellarError(error, message);
 	    }
 	    self.callback(error);
 	  };
@@ -5295,7 +5206,7 @@ var stellar =
 	  var account = this.tx_json.Account;
 
 	  if (!UInt160.is_valid(account)) {
-	    return this.emit('error', new RippleError('tejInvalidAccount', 'Account is missing or invalid'));
+	    return this.emit('error', new StellarError('tejInvalidAccount', 'Account is missing or invalid'));
 	  }
 
 	  // YYY Might check paths for invalid accounts.
@@ -5352,10 +5263,10 @@ var stellar =
 /* 6 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var extend    = __webpack_require__(43);
+	var extend    = __webpack_require__(32);
 	var UInt160 = __webpack_require__(8).UInt160;
-	var utils = __webpack_require__(19);
-	var Float = __webpack_require__(26).Float;
+	var utils = __webpack_require__(16);
+	var Float = __webpack_require__(23).Float;
 
 	//
 	// Currency support
@@ -5617,7 +5528,7 @@ var stellar =
 
 	/**
 	 *
-	 * @param referenceDate - number of seconds since the Ripple Epoch (0:00 on January 1, 2000 UTC)
+	 * @param referenceDate - number of seconds since the Stellar Epoch (0:00 on January 1, 2000 UTC)
 	 *                        used to calculate the interest over provided interval
 	 *                        pass in one years worth of seconds to ge the yearly interest
 	 * @returns {number} - interest for provided interval, can be negative for demurred currencies
@@ -5712,16 +5623,16 @@ var stellar =
 /* 7 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var sjcl    = __webpack_require__(19).sjcl;
-	var utils   = __webpack_require__(19);
-	var extend  = __webpack_require__(43);
+	var sjcl    = __webpack_require__(28);
+	var utils   = __webpack_require__(16);
+	var extend  = __webpack_require__(32);
 
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
 	var Base = {};
 
 	var alphabets = Base.alphabets = {
-	  ripple  :  "gsphnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCr65jkm8oFqi1tuvAxyz",
+	  stellar  :  "gsphnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCr65jkm8oFqi1tuvAxyz",
 	  tipple  :  "GPShNAF39wBUDnERHJKLM4pQrsT7VWXYZ2bcdeCg65jkm8ofqi1tuvaxyz",
 	  bitcoin :  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 	};
@@ -5747,14 +5658,14 @@ var stellar =
 	// --> input: big-endian array of bytes.
 	// <-- string at least as long as input.
 	Base.encode = function(input, alpha) {
-	  var alphabet = alphabets[alpha || 'ripple'];
+	  var alphabet = alphabets[alpha || 'stellar'];
 	  var bi_base  = new BigInteger(String(alphabet.length));
 	  var bi_q     = new BigInteger();
 	  var bi_r     = new BigInteger();
 	  var bi_value = new BigInteger(input);
 	  var buffer   = [];
 
-	  while (bi_value.compareTo(BigInteger.ZERO) > 0) {
+	  while (bi_value.subtract(BigInteger.ZERO) > 0) {
 	    bi_value.divRemTo(bi_base, bi_q, bi_r);
 	    bi_q.copyTo(bi_value);
 	    buffer.push(alphabet[bi_r.intValue()]);
@@ -5774,7 +5685,7 @@ var stellar =
 	    return void(0);
 	  }
 
-	  var alphabet = alphabets[alpha || 'ripple'];
+	  var alphabet = alphabets[alpha || 'stellar'];
 	  var bi_base  = new BigInteger(String(alphabet.length));
 	  var bi_value = new BigInteger();
 	  var i;
@@ -5886,13 +5797,13 @@ var stellar =
 /* 8 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var utils   = __webpack_require__(19);
-	var config  = __webpack_require__(21);
-	var extend  = __webpack_require__(43);
+	var utils   = __webpack_require__(16);
+	var config  = __webpack_require__(18);
+	var extend  = __webpack_require__(32);
 
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
-	var UInt = __webpack_require__(28).UInt;
+	var UInt = __webpack_require__(24).UInt;
 	var Base = __webpack_require__(7).Base;
 
 	//
@@ -5993,9 +5904,9 @@ var stellar =
 /* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var utils  = __webpack_require__(19);
-	var extend = __webpack_require__(43);
-	var UInt   = __webpack_require__(28).UInt;
+	var utils  = __webpack_require__(16);
+	var extend = __webpack_require__(32);
+	var UInt   = __webpack_require__(24).UInt;
 
 	//
 	// UInt256 support
@@ -6026,17 +5937,17 @@ var stellar =
 	// Seed support
 	//
 
-	var extend = __webpack_require__(43);
-	var utils  = __webpack_require__(19);
-	var sjcl   = utils.sjcl;
+	var extend = __webpack_require__(32);
+	var utils  = __webpack_require__(16);
+	var sjcl   = __webpack_require__(28);
 
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
 	var Base    = __webpack_require__(7).Base;
-	var UInt    = __webpack_require__(28).UInt;
+	var UInt    = __webpack_require__(24).UInt;
 	var UInt256 = __webpack_require__(9).UInt256;
 	var UInt160 = __webpack_require__(8).UInt160;
-	var KeyPair = __webpack_require__(29).KeyPair;
+	var KeyPair = __webpack_require__(25).KeyPair;
 
 	var Seed = extend(function () {
 	  // Internal form: NaN or BigInteger
@@ -6139,8 +6050,8 @@ var stellar =
 /* 11 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var extend  = __webpack_require__(43);
-	var utils   = __webpack_require__(19);
+	var extend  = __webpack_require__(32);
+	var utils   = __webpack_require__(16);
 	var UInt160 = __webpack_require__(8).UInt160;
 	var Amount  = __webpack_require__(3).Amount;
 
@@ -6204,8 +6115,8 @@ var stellar =
 	 *     // Type of diff, e.g. CreatedNode, ModifiedNode
 	 *     diffType: 'CreatedNode'
 	 *
-	 *     // Type of node affected, e.g. RippleState, AccountRoot
-	 *     entryType: 'RippleState',
+	 *     // Type of node affected, e.g. StellarState, AccountRoot
+	 *     entryType: 'StellarState',
 	 *
 	 *     // Index of the ledger this change occurred in
 	 *     ledgerIndex: '01AB01AB...',
@@ -6315,16 +6226,16 @@ var stellar =
 /* 12 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(Buffer) {var assert    = __webpack_require__(39);
-	var extend    = __webpack_require__(43);
-	var binformat = __webpack_require__(18);
-	var stypes    = __webpack_require__(30);
+	/* WEBPACK VAR INJECTION */(function(Buffer) {var assert    = __webpack_require__(33);
+	var extend    = __webpack_require__(32);
+	var binformat = __webpack_require__(15);
+	var stypes    = __webpack_require__(26);
 	var UInt256   = __webpack_require__(9).UInt256;
-	var Crypt     = __webpack_require__(31).Crypt;
-	var utils     = __webpack_require__(19);
+	var Crypt     = __webpack_require__(27).Crypt;
+	var utils     = __webpack_require__(16);
 
-	var sjcl = utils.sjcl;
-	var BigInteger = utils.jsbn.BigInteger;
+	var sjcl = __webpack_require__(28);
+	var BigInteger = __webpack_require__(31);
 
 	var TRANSACTION_TYPES = { };
 
@@ -6646,16 +6557,16 @@ var stellar =
 
 	exports.SerializedObject = SerializedObject;
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
 
 /***/ },
 /* 13 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var util   = __webpack_require__(37);
-	var extend = __webpack_require__(43);
+	var util   = __webpack_require__(29);
+	var extend = __webpack_require__(32);
 
-	function RippleError(code, message) {
+	function StellarError(code, message) {
 	  switch (typeof code) {
 	    case 'object':
 	      extend(this, code);
@@ -6680,894 +6591,40 @@ var stellar =
 	  }
 	};
 
-	util.inherits(RippleError, Error);
+	util.inherits(StellarError, Error);
 
-	RippleError.prototype.name = 'RippleError';
+	StellarError.prototype.name = 'StellarError';
 
-	exports.RippleError = RippleError;
+	exports.StellarError = StellarError;
 
 
 /***/ },
 /* 14 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var async              = __webpack_require__(48);
-	var crypto             = __webpack_require__(41);
-	var sjcl               = __webpack_require__(19).sjcl;
-	var Remote             = __webpack_require__(1).Remote;
-	var Seed               = __webpack_require__(10).Seed;
-	var KeyPair            = __webpack_require__(29).KeyPair;
-	var Account            = __webpack_require__(4).Account;
-	var UInt160            = __webpack_require__(8).UInt160;
-
-	// Message class (static)
-	var Message = {};
-
-	Message.HASH_FUNCTION  = sjcl.hash.sha512.hash;
-	Message.MAGIC_BYTES    = 'Ripple Signed Message:\n';
-
-	var REGEX_HEX = /^[0-9a-fA-F]+$/;
-	var REGEX_BASE64 = /^([A-Za-z0-9\+]{4})*([A-Za-z0-9\+]{2}==)|([A-Za-z0-9\+]{3}=)?$/;
-
-	/**
-	 *  Produce a Base64-encoded signature on the given message with
-	 *  the string 'Ripple Signed Message:\n' prepended.
-	 *
-	 *  Note that this signature uses the signing function that includes
-	 *  a recovery_factor to be able to extract the public key from the signature
-	 *  without having to pass the public key along with the signature.
-	 *
-	 *  @static
-	 *
-	 *  @param {String} message
-	 *  @param {sjcl.ecc.ecdsa.secretKey|Any format accepted by Seed.from_json} secret_key
-	 *  @param {RippleAddress} [The first key] account Field to specify the signing account. 
-	 *    If this is omitted the first account produced by the secret generator will be used.
-	 *  @returns {Base64-encoded String} signature
-	 */
-	Message.signMessage = function(message, secret_key, account) {
-
-	  return Message.signHash(Message.HASH_FUNCTION(Message.MAGIC_BYTES + message), secret_key, account);
-
-	};
-
-	/**
-	 *  Produce a Base64-encoded signature on the given hex-encoded hash.
-	 *
-	 *  Note that this signature uses the signing function that includes
-	 *  a recovery_factor to be able to extract the public key from the signature
-	 *  without having to pass the public key along with the signature.
-	 *
-	 *  @static
-	 *
-	 *  @param {bitArray|Hex-encoded String} hash
-	 *  @param {sjcl.ecc.ecdsa.secretKey|Any format accepted by Seed.from_json} secret_key
-	 *  @param {RippleAddress} [The first key] account Field to specify the signing account. 
-	 *    If this is omitted the first account produced by the secret generator will be used.
-	 *  @returns {Base64-encoded String} signature
-	 */
-	Message.signHash = function(hash, secret_key, account) {
-
-	  if (typeof hash === 'string' && /^[0-9a-fA-F]+$/.test(hash)) {
-	    hash = sjcl.codec.hex.toBits(hash);
-	  }
-
-	  if (typeof hash !== 'object' || hash.length <= 0 || typeof hash[0] !== 'number') {
-	    throw new Error('Hash must be a bitArray or hex-encoded string');
-	  }
-
-	  if (!(secret_key instanceof sjcl.ecc.ecdsa.secretKey)) {
-	    secret_key = Seed.from_json(secret_key).get_key(account)._secret;
-	  }
-
-	  var signature_bits = secret_key.signWithRecoverablePublicKey(hash);
-	  var signature_base64 = sjcl.codec.base64.fromBits(signature_bits);
-
-	  return signature_base64;
-
-	};
-
-
-	/**
-	 *  Verify the signature on a given message.
-	 *
-	 *  Note that this function is asynchronous. 
-	 *  The ripple-lib remote is used to check that the public
-	 *  key extracted from the signature corresponds to one that is currently
-	 *  active for the given account.
-	 *
-	 *  @static
-	 *
-	 *  @param {String} data.message
-	 *  @param {RippleAddress} data.account
-	 *  @param {Base64-encoded String} data.signature
-	 *  @param {ripple-lib Remote} remote
-	 *  @param {Function} callback
-	 *
-	 *  @callback callback
-	 *  @param {Error} error
-	 *  @param {boolean} is_valid true if the signature is valid, false otherwise
-	 */
-	Message.verifyMessageSignature = function(data, remote, callback) {
-
-	  if (typeof data.message === 'string') {
-	    data.hash = Message.HASH_FUNCTION(Message.MAGIC_BYTES + data.message);
-	  } else {
-	    return callback(new Error('Data object must contain message field to verify signature'));
-	  }
-
-	  return Message.verifyHashSignature(data, remote, callback);
-
-	};
-
-
-	/**
-	 *  Verify the signature on a given hash.
-	 *
-	 *  Note that this function is asynchronous. 
-	 *  The ripple-lib remote is used to check that the public
-	 *  key extracted from the signature corresponds to one that is currently
-	 *  active for the given account.
-	 *
-	 *  @static
-	 *
-	 *  @param {bitArray|Hex-encoded String} data.hash
-	 *  @param {RippleAddress} data.account
-	 *  @param {Base64-encoded String} data.signature
-	 *  @param {ripple-lib Remote} remote
-	 *  @param {Function} callback
-	 *
-	 *  @callback callback
-	 *  @param {Error} error
-	 *  @param {boolean} is_valid true if the signature is valid, false otherwise
-	 */
-	Message.verifyHashSignature = function(data, remote, callback) {
-
-	  var hash,
-	    account,
-	    signature;
-
-	  if(typeof callback !== 'function') {
-	    throw new Error('Must supply callback function');
-	  }
-
-	  hash = data.hash;
-	  if (hash && typeof hash === 'string' && REGEX_HEX.test(hash)) {
-	    hash = sjcl.codec.hex.toBits(hash);
-	  }
-
-	  if (typeof hash !== 'object' || hash.length <= 0 || typeof hash[0] !== 'number') {
-	    return callback(new Error('Hash must be a bitArray or hex-encoded string'));
-	  }
-
-	  account = data.account || data.address;
-	  if (!account || !UInt160.from_json(account).is_valid()) {
-	    return callback(new Error('Account must be a valid ripple address'));
-	  }
-
-	  signature = data.signature;
-	  if (typeof signature !== 'string' || !REGEX_BASE64.test(signature)) {
-	    return callback(new Error('Signature must be a Base64-encoded string'));
-	  }
-	  signature = sjcl.codec.base64.toBits(signature);
-
-	  if (!(remote instanceof Remote) || remote.state !== 'online') {
-	    return callback(new Error('Must supply connected Remote to verify signature'));
-	  }
-
-	  function recoverPublicKey (async_callback) {
-
-	    var public_key;
-	    try {
-	      public_key = sjcl.ecc.ecdsa.publicKey.recoverFromSignature(hash, signature);
-	    } catch (err) {
-	      return async_callback(err);
-	    }
-
-	    if (public_key) {
-	      async_callback(null, public_key);
-	    } else {
-	      async_callback(new Error('Could not recover public key from signature'));
-	    }
-
-	  };
-
-	  function checkPublicKeyIsValid (public_key, async_callback) {
-
-	    // Get hex-encoded public key
-	    var key_pair = new KeyPair();
-	    key_pair._pubkey = public_key;
-	    var public_key_hex = key_pair.to_hex_pub();
-
-	    var account_class_instance = new Account(remote, account);
-	    account_class_instance.publicKeyIsActive(public_key_hex, async_callback);
-
-	  };
-
-	  var steps = [
-	    recoverPublicKey,
-	    checkPublicKeyIsValid
-	  ];
-
-	  async.waterfall(steps, callback);
-
-	};
-
-	exports.Message = Message;
-
-
-/***/ },
-/* 15 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var async      = __webpack_require__(48);
-	var blobClient = __webpack_require__(32).BlobClient;
-	var AuthInfo   = __webpack_require__(16).AuthInfo;
-	var crypt      = __webpack_require__(31).Crypt;
-	var log        = __webpack_require__(24).sub('vault');
-	function VaultClient(opts) {
-	  
-	  var self = this;
-	  
-	  if (!opts) {
-	    opts = { };
-	  }
-
-	  if (typeof opts === 'string') {
-	    opts = { domain: opts };
-	  }
-
-	  this.domain   = opts.domain || 'ripple.com';
-	  this.infos    = { };
-	};
-
-	/**
-	 * getAuthInfo
-	 * gets auth info for a username. returns authinfo
-	 * even if user does not exists (with exist set to false)
-	 * @param {string} username
-	 * @param {function} callback
-	 */
-	VaultClient.prototype.getAuthInfo = function (username, callback) {
-
-	  AuthInfo.get(this.domain, username, function(err, authInfo) {
-	    if (err) {
-	      return callback(err);
-	    }
-
-	    if (authInfo.version !== 3) {
-	      return callback(new Error('This wallet is incompatible with this version of the vault-client.'));
-	    }
-
-	    if (!authInfo.pakdf) {
-	      return callback(new Error('No settings for PAKDF in auth packet.'));
-	    }
-
-	    if (typeof authInfo.blobvault !== 'string') {
-	      return callback(new Error('No blobvault specified in the authinfo.'));
-	    }
-
-	    callback(null, authInfo);
-	  });  
-	};
-
-	/**
-	 * _deriveLoginKeys
-	 * method designed for asnyc waterfall
-	 */
-
-	VaultClient.prototype._deriveLoginKeys = function (authInfo, password, callback) {
-
-	  //derive login keys
-	  crypt.derive(authInfo.pakdf, 'login', authInfo.username.toLowerCase(), password, function(err, keys) {
-	    if (err) {
-	      callback(err);
-	    } else {
-	      callback(null, authInfo, password, keys);
-	    }
-	  });
-	};
-
-
-
-	/**
-	 * _deriveUnlockKey
-	 * method designed for asnyc waterfall
-	 */
-
-	VaultClient.prototype._deriveUnlockKey = function (authInfo, password, keys, callback) {
-	  //derive unlock key
-	  crypt.derive(authInfo.pakdf, 'unlock', authInfo.username.toLowerCase(), password, function(err, unlock) {
-	    if (err) {
-	      log.error('derive:', err);
-	      return callback(err);
-	    }
-
-	    if (!keys) {
-	      keys = { };
-	    }
-	    
-	    keys.unlock = unlock.unlock;
-	    callback(null, authInfo, keys);
-	  });
-	};
-	  
-	/**
-	 * Get a ripple name from a given account address, if it has one
-	 * @param {string} address - Account address to query
-	 * @param {string} url     - Url of blob vault
-	 */
-
-	VaultClient.prototype.getRippleName = function(address, url, callback) {
-	  //use the url from previously retrieved authInfo, if necessary
-	  if (!url) {
-	    callback(new Error('Blob vault URL is required'));
-	  } else {
-	    blobClient.getRippleName(url, address, callback);
-	  }
-	};
-
-	/**
-	 * Authenticate and retrieve a decrypted blob using a ripple name and password
-	 *
-	 * @param {string}    username
-	 * @param {string}    password
-	 * @param {function}  fn - Callback function
-	 */
-
-	VaultClient.prototype.login = function(username, password, callback) {
-	  var self = this;
-	  
-	  var steps = [
-	    getAuthInfo,
-	    self._deriveLoginKeys,
-	    getBlob
-	  ];
-
-	  async.waterfall(steps, callback);
-	    
-	  function getAuthInfo(callback) {
-	    self.getAuthInfo(username, function(err, authInfo){
-	      
-	      if (authInfo && !authInfo.exists) {
-	        return callback(new Error('User does not exist.'));
-	      }
-	            
-	      return callback (err, authInfo, password);
-	    });  
-	  }
-	  
-	  function getBlob(authInfo, password, keys, callback) {
-	    blobClient.get(authInfo.blobvault, keys.id, keys.crypt, function(err, blob) {
-	      if (err) {
-	        return callback(err);
-	      }
-
-	      //save for relogin
-	      self.infos[keys.id] = authInfo;
-
-	      //migrate missing fields
-	      if (blob.missing_fields) {
-	        if (blob.missing_fields.encrypted_blobdecrypt_key) {     
-	          log.info('migration: saving encrypted blob decrypt key');
-	          authInfo.blob = blob;
-	          //get the key to unlock the secret, then update the blob keys          
-	          self._deriveUnlockKey(authInfo, password, keys, updateKeys);
-	        }
-	      }
-	         
-	      callback(null, {
-	        blob      : blob,
-	        username  : authInfo.username,
-	        verified  : authInfo.emailVerified
-	      });
-	    });
-	  };
-	  
-	  function updateKeys (err, params, keys) {
-	    if (err || !keys.unlock) {
-	      return; //unable to unlock
-	    }
-	    
-	    var secret;
-	    try {
-	      secret = crypt.decrypt(keys.unlock, params.blob.encrypted_secret);
-	    } catch (error) {
-	      return log.error('decrypt:', error);
-	    } 
-	    
-	    options = {
-	      username  : params.username,
-	      blob      : params.blob,
-	      masterkey : secret,
-	      keys      : keys
-	    };
-	    
-	    blobClient.updateKeys(options, function(err, resp){
-	      if (err) {
-	        log.error('updateKeys:', err);
-	      }
-	    });     
-	  } 
-	};
-
-	/**
-	 * Retreive and decrypt blob using a blob url, id and crypt derived previously.
-	 *
-	 * @param {string}   url - Blob vault url
-	 * @param {string}   id  - Blob id from previously retreived blob
-	 * @param {string}   key - Blob decryption key
-	 * @param {function} fn  - Callback function
-	 */
-
-	VaultClient.prototype.relogin = function(url, id, key, callback) {
-	  //use the url from previously retrieved authInfo, if necessary
-	  if (!url && this.infos[id]) {
-	    url = this.infos[id].blobvault;
-	  }
-
-	  if (!url) {
-	    return callback(new Error('Blob vault URL is required'));
-	  }
-
-	  blobClient.get(url, id, key, function(err, blob) {
-	    if (err) {
-	      callback(err);
-	    } else {
-	      callback (null, { blob: blob });
-	    }
-	  });
-	};
-
-	/**
-	 * Decrypt the secret key using a username and password
-	 *
-	 * @param {string}    username
-	 * @param {string}    password
-	 * @param {string}    encryptSecret
-	 * @param {function}  fn - Callback function
-	 */
-
-	VaultClient.prototype.unlock = function(username, password, encryptSecret, fn) {
-	  var self = this;
-	  
-	  var steps = [
-	    getAuthInfo,
-	    self._deriveUnlockKey,
-	    unlockSecret
-	  ];
-
-	  async.waterfall(steps, fn);
-	  
-	  function getAuthInfo(callback) {
-	    self.getAuthInfo(username, function(err, authInfo){
-	      
-	      if (authInfo && !authInfo.exists) {
-	        return callback(new Error('User does not exist.'));
-	      }
-	            
-	      return callback (err, authInfo, password, {});
-	    });  
-	  }
-	  
-	  function unlockSecret (authinfo, keys, callback) {
-
-	    var secret;
-	    try {
-	      secret = crypt.decrypt(keys.unlock, encryptSecret);
-	    } catch (error) {
-	      return callback(error);
-	    }  
-	    
-	    callback(null, {
-	      keys   : keys,
-	      secret : secret
-	    });      
-	  }
-	};
-
-	/**
-	 * Retrieve the decrypted blob and secret key in one step using
-	 * the username and password
-	 *
-	 * @param {string}    username
-	 * @param {string}    password
-	 * @param {function}  fn - Callback function
-	 */
-
-	VaultClient.prototype.loginAndUnlock = function(username, password, fn) {
-	  var self = this;
-
-	  var steps = [
-	    login,
-	    deriveUnlockKey,
-	    unlockSecret
-	  ];
-
-	  async.waterfall(steps, fn);  
-	  
-	  function login (callback) {
-	    self.login(username, password, function(err, resp) {
-
-	      if (err) {
-	        return callback(err);
-	      }
-	  
-	      if (!resp.blob || !resp.blob.encrypted_secret) {
-	        return callback(new Error('Unable to retrieve blob and secret.'));
-	      }
-	  
-	      if (!resp.blob.id || !resp.blob.key) {
-	        return callback(new Error('Unable to retrieve keys.'));
-	      }
-	  
-	      //get authInfo via id - would have been saved from login
-	      var authInfo = self.infos[resp.blob.id];
-	  
-	      if (!authInfo) {
-	        return callback(new Error('Unable to find authInfo'));
-	      }
-	    
-	      callback(null, authInfo, password, resp.blob);
-	    });    
-	  };
-
-	  function deriveUnlockKey (authInfo, password, blob, callback) {
-	    self._deriveUnlockKey(authInfo, password, null, function(err, authInfo, keys){
-	      callback(err, keys.unlock, authInfo, blob);
-	    });
-	  };
-	  
-	  function unlockSecret (unlock, authInfo, blob, callback) {
-	    var secret;
-	    try {
-	      secret = crypt.decrypt(unlock, blob.encrypted_secret);
-	    } catch (error) {
-	      return callback(error);
-	    }     
-	    
-	    callback(null, {
-	      blob      : blob,
-	      unlock    : unlock,
-	      secret    : secret,
-	      username  : authInfo.username,
-	      verified  : authInfo.emailVerified
-	    });    
-	  };  
-	};
-
-	/**
-	 * Check blobvault for existance of username
-	 *
-	 * @param {string}    username
-	 * @param {function}  fn - Callback function
-	 */
-
-	VaultClient.prototype.exists = function(username, callback) {
-	  AuthInfo.get(this.domain, username.toLowerCase(), function(err, authInfo) {
-	    if (err) {
-	      callback(err);
-	    } else {
-	      callback(null, !!authInfo.exists);
-	    }
-	  });
-	};
-
-	/**
-	 * Verify an email address for an existing user
-	 *
-	 * @param {string}    username
-	 * @param {string}    token - Verification token
-	 * @param {function}  fn - Callback function
-	 */
-
-	VaultClient.prototype.verify = function(username, token, callback) {
-	  var self = this;
-
-	  self.getAuthInfo(username, function (err, authInfo){
-	    if (err) {
-	      return callback(err);
-	    }
-	    
-	    blobClient.verify(authInfo.blobvault, username.toLowerCase(), token, callback);     
-	  });
-	};
-
-	/**
-	 * resendEmail
-	 * send a new verification email
-	 * @param {object}   options
-	 * @param {string}   options.id
-	 * @param {string}   options.username
-	 * @param {string}   options.account_id
-	 * @param {string}   options.email
-	 * @param {string}   options.activateLink
-	 * @param {function} fn - Callback
-	 */
-
-	VaultClient.prototype.resendEmail = function (options, fn) {
-	  blobClient.resendEmail(options, fn);  
-	};
-
-	/**
-	 * recoverBlob
-	 * recover blob with account secret
-	 * @param {object} options
-	 * @param {string} options.url
-	 * @param {string} options.username
-	 * @param {string} options.masterkey
-	 * @param {function} 
-	 */
-
-	VaultClient.prototype.recoverBlob = function (options, fn) {
-	  blobClient.recoverBlob(options, fn);    
-	};
-
-	/*
-	 * changePassword
-	 * @param {object} options
-	 * @param {string} options.username
-	 * @param {string} options.password
-	 * @param {string} options.masterkey
-	 * @param {object} options.blob
-	 */
-
-	VaultClient.prototype.changePassword = function (options, fn) {
-	  var self     = this;
-	  var password = String(options.password).trim();
-	  
-	  var steps = [
-	    getAuthInfo,
-	    self._deriveLoginKeys,
-	    self._deriveUnlockKey,
-	    changePassword
-	  ];
-	  
-	  async.waterfall(steps, fn);
-	    
-	  function getAuthInfo(callback) {
-	    self.getAuthInfo(options.username, function(err, authInfo) { 
-	      return callback (err, authInfo, password);      
-	    });
-	  };
-	  
-	  function changePassword (authInfo, keys, callback) {
-	    options.keys = keys;
-	    blobClient.updateKeys(options, callback); 
-	  };
-	};
-
-	/**
-	 * rename
-	 * rename a ripple account
-	 * @param {object} options
-	 * @param {string} options.username
-	 * @param {string} options.new_username
-	 * @param {string} options.password
-	 * @param {string} options.masterkey
-	 * @param {object} options.blob
-	 * @param {function} fn
-	 */
-
-	VaultClient.prototype.rename = function (options, fn) {
-	  var self         = this;
-	  var new_username = String(options.new_username).trim();
-	  var password     = String(options.password).trim();
-	  
-	  var steps = [
-	    getAuthInfo,
-	    self._deriveLoginKeys,
-	    self._deriveUnlockKey,
-	    renameBlob
-	  ];
-
-	  async.waterfall(steps, fn);
-	    
-	  function getAuthInfo(callback) {
-	    self.getAuthInfo(new_username, function(err, authInfo){
-	      
-	      if (authInfo && authInfo.exists) {
-	        return callback(new Error('username already taken.'));
-	      } else {
-	        authInfo.username = new_username;
-	      }
-	            
-	      return callback (err, authInfo, password);
-	    });  
-	  };
-	  
-	  function renameBlob (authInfo, keys, callback) {
-	    options.keys = keys;
-	    blobClient.rename(options, callback);    
-	  };
-	};
-
-	/**
-	 * Register a new user and save to the blob vault
-	 *
-	 * @param {object} options
-	 * @param {string} options.username
-	 * @param {string} options.password
-	 * @param {string} options.masterkey   //optional, will create if absent
-	 * @param {string} options.email
-	 * @param {string} options.activateLink
-	 * @param {object} options.oldUserBlob //optional
-	 * @param {function} fn
-	 */
-
-	VaultClient.prototype.register = function(options, fn) {
-	  var self     = this;
-	  var username = String(options.username).trim();
-	  var password = String(options.password).trim();
-	  var result   = self.validateUsername(username);
-	  
-	  if (!result.valid) {
-	    return fn(new Error('invalid username.'));  
-	  }
-	  
-	  var steps = [
-	    getAuthInfo,
-	    self._deriveLoginKeys,
-	    self._deriveUnlockKey,
-	    create
-	  ];
-	  
-	  async.waterfall(steps, fn);
-	  
-	  function getAuthInfo(callback) {
-	    self.getAuthInfo(username, function(err, authInfo){      
-	      return callback (err, authInfo, password);
-	    });  
-	  };
-
-	  function create(authInfo, keys, callback) {
-	    var params = {
-	      url          : authInfo.blobvault,
-	      id           : keys.id,
-	      crypt        : keys.crypt,
-	      unlock       : keys.unlock,
-	      username     : username,
-	      email        : options.email,
-	      masterkey    : options.masterkey || crypt.createMaster(),
-	      activateLink : options.activateLink,
-	      oldUserBlob  : options.oldUserBlob,
-	      domain       : options.domain
-	    };
-	        
-	    blobClient.create(params, function(err, blob) {
-	      if (err) {
-	        callback(err);
-	      } else {
-	        callback(null, {
-	          blob     : blob, 
-	          username : username
-	        });
-	      }
-	    });
-	  };
-	};
-
-	VaultClient.prototype.validateUsername = function (username) {
-	  username   = String(username).trim();
-	  var result = {
-	    valid  : false,
-	    reason : ''
-	  };
-	  
-	  if (username.length < 2) {
-	    result.reason = 'tooshort';
-	  } else if (username.length > 20) {
-	    result.reason = 'toolong'; 
-	  } else if (!/^[a-zA-Z0-9\-]+$/.exec(username)) {
-	    result.reason = 'charset'; 
-	  } else if (/^-/.exec(username)) {
-	    result.reason = 'starthyphen'; 
-	  } else if (/-$/.exec(username)) {
-	    result.reason = 'endhyphen'; 
-	  } else if (/--/.exec(username)) {
-	    result.reason = 'multhyphen'; 
-	  } else {
-	    result.valid = true;
-	  }
-	  
-	  return result;
-	};
-
-	exports.VaultClient = VaultClient;
-
-
-/***/ },
-/* 16 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var async      = __webpack_require__(48);
-	var superagent = __webpack_require__(49);
-	var RippleTxt  = __webpack_require__(17).RippleTxt;
-
-	var AuthInfo = { };
-
-	AuthInfo._getRippleTxt = function(domain, callback) {
-	  RippleTxt.get(domain, callback);
-	};
-
-	AuthInfo._getUser = function(url, callback) {
-	  superagent.get(url, callback);
-	};
-
-
-	/**
-	 * Get auth info for a given username
-	 *
-	 * @param {string}    domain - Domain which hosts the user's info
-	 * @param {string}    username - Username who's info we are retreiving
-	 * @param {function}  fn - Callback function
-	 */
-
-	AuthInfo.get = function(domain, username, callback) {
-	  var self = this;
-	  username = username.toLowerCase();
-	  
-	  function getRippleTxt(callback) {
-	    self._getRippleTxt(domain, function(err, txt) {
-	      if (err) {
-	        return callback(err);
-	      }
-
-	      if (!txt.authinfo_url) {
-	        return callback(new Error('Authentication is not supported on ' + domain));
-	      }
-
-	      var url = Array.isArray(txt.authinfo_url) ? txt.authinfo_url[0] : txt.authinfo_url;
-
-	      url += '?domain=' + domain + '&username=' + username;
-
-	      callback(null, url);
-	    });
-	  };
-
-	  function getUser(url, callback) {
-	    self._getUser(url, function(err, res) {
-	      if (err || res.error) {
-	        callback(new Error('Authentication info server unreachable'));
-	      } else {
-	        callback(null, res.body);
-	      }
-	    });
-	  };
-
-	  async.waterfall([ getRippleTxt, getUser ], callback);
-	};
-
-	exports.AuthInfo = AuthInfo;
-
-
-/***/ },
-/* 17 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var request   = __webpack_require__(49);
+	var request   = __webpack_require__(41);
 	var Currency  = __webpack_require__(6).Currency;
 
-	var RippleTxt = {
+	var StellarTxt = {
 	  txts : { }
 	};
 
-	RippleTxt.urlTemplates = [
-	  'https://{{domain}}/ripple.txt',
-	  'https://www.{{domain}}/ripple.txt',
-	  'https://ripple.{{domain}}/ripple.txt',
-	  'http://{{domain}}/ripple.txt',
-	  'http://www.{{domain}}/ripple.txt',
-	  'http://ripple.{{domain}}/ripple.txt'
+	StellarTxt.urlTemplates = [
+	  'https://{{domain}}/stellar.txt',
+	  'https://www.{{domain}}/stellar.txt',
+	  'https://stellar.{{domain}}/stellar.txt',
+	  'http://{{domain}}/stellar.txt',
+	  'http://www.{{domain}}/stellar.txt',
+	  'http://stellar.{{domain}}/stellar.txt'
 	];
 
 	/**
-	 * Gets the ripple.txt file for the given domain
+	 * Gets the stellar.txt file for the given domain
 	 * @param {string}    domain - Domain to retrieve file from
 	 * @param {function}  fn - Callback function
 	 */
 
-	RippleTxt.get = function(domain, fn) {
+	StellarTxt.get = function(domain, fn) {
 	  var self = this;
 
 	  if (self.txts[domain]) {
@@ -7575,10 +6632,10 @@ var stellar =
 	  }
 
 	  ;(function nextUrl(i) {
-	    var url = RippleTxt.urlTemplates[i];
+	    var url = StellarTxt.urlTemplates[i];
 	    
 	    if (!url) {
-	      return fn(new Error('No ripple.txt found'));
+	      return fn(new Error('No stellar.txt found'));
 	    }
 
 	    url = url.replace('{{domain}}', domain);
@@ -7597,11 +6654,11 @@ var stellar =
 	};
 
 	/**
-	 * Parse a ripple.txt file
-	 * @param {string}  txt - Unparsed ripple.txt data
+	 * Parse a stellar.txt file
+	 * @param {string}  txt - Unparsed stellar.txt data
 	 */
 
-	RippleTxt.parse = function(txt) {
+	StellarTxt.parse = function(txt) {
 	  var currentSection = '';
 	  var sections = { };
 	  
@@ -7635,7 +6692,7 @@ var stellar =
 	 * @param {Object} url
 	 */
 
-	RippleTxt.extractDomain = function (url) {
+	StellarTxt.extractDomain = function (url) {
 	  match = /[^.]*\.[^.]{2,3}(?:\.[^.]{2,3})?([^.\?][^\?.]+?)?$/.exec(url);
 	  return match && match[0] ? match[0] : url;
 	};
@@ -7643,13 +6700,13 @@ var stellar =
 	/**
 	 * getCurrencies
 	 * returns domain, issuer account and currency object
-	 * for each currency found in the domain's ripple.txt file
+	 * for each currency found in the domain's stellar.txt file
 	 * @param {Object} domain
 	 * @param {Object} fn
 	 */
 
-	RippleTxt.getCurrencies = function(domain, fn) {
-	  domain = RippleTxt.extractDomain(domain);
+	StellarTxt.getCurrencies = function(domain, fn) {
+	  domain = StellarTxt.extractDomain(domain);
 	  this.get(domain, function(err, txt) {
 	    if (err) {
 	      return fn(err);  
@@ -7677,11 +6734,11 @@ var stellar =
 	  });
 	}; 
 
-	exports.RippleTxt = RippleTxt;
+	exports.StellarTxt = StellarTxt;
 
 
 /***/ },
-/* 18 */
+/* 15 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/**
@@ -7805,7 +6862,7 @@ var stellar =
 	    8: 'Fee',
 	    9: 'SendMax',
 	    16: 'MinimumOffer',
-	    17: 'RippleEscrow',
+	    17: 'StellarEscrow',
 	    18: 'DeliveredAmount'
 	  },
 	  7: { // VL
@@ -7948,7 +7005,7 @@ var stellar =
 	    [ 'Expiration'         , REQUIRED ],
 	    [ 'BondAmount'         , REQUIRED ],
 	    [ 'StampEscrow'        , REQUIRED ],
-	    [ 'RippleEscrow'       , REQUIRED ],
+	    [ 'StellarEscrow'       , REQUIRED ],
 	    [ 'CreateCode'         , OPTIONAL ],
 	    [ 'FundCode'           , OPTIONAL ],
 	    [ 'RemoveCode'         , OPTIONAL ],
@@ -8052,7 +7109,7 @@ var stellar =
 	    ['TakerPays',           REQUIRED],
 	    ['TakerGets',           REQUIRED],
 	    ['Account',             REQUIRED]]),
-	  RippleState: [114].concat(sleBase,[
+	  StellarState: [114].concat(sleBase,[
 	    ['LedgerEntryType',     REQUIRED],
 	    ['Flags',               REQUIRED],
 	    ['PreviousTxnLgrSeq',   REQUIRED],
@@ -8099,8 +7156,11 @@ var stellar =
 
 
 /***/ },
-/* 19 */
+/* 16 */
 /***/ function(module, exports, __webpack_require__) {
+
+	var sjcl = __webpack_require__(28);
+	var BigInteger = __webpack_require__(31);
 
 	function filterErr(code, done) {
 	  return function(e) {
@@ -8216,7 +7276,7 @@ var stellar =
 	};
 
 	/**
-	 * Convert a ripple epoch to a JavaScript timestamp.
+	 * Convert a stellar epoch to a JavaScript timestamp.
 	 *
 	 * JavaScript timestamps are unix epoch in milliseconds.
 	 */
@@ -8225,7 +7285,7 @@ var stellar =
 	};
 
 	/**
-	 * Convert a JavaScript timestamp or Date to a Ripple epoch.
+	 * Convert a JavaScript timestamp or Date to a Stellar epoch.
 	 *
 	 * JavaScript timestamps are unix epoch in milliseconds.
 	 */
@@ -8238,8 +7298,8 @@ var stellar =
 	};
 
 	exports.time = {
-	  fromRipple: toTimestamp,
-	  toRipple: fromTimestamp
+	  fromStellar: toTimestamp,
+	  toStellar: fromTimestamp
 	};
 
 	exports.trace         = trace;
@@ -8254,24 +7314,16 @@ var stellar =
 	exports.toTimestamp   = toTimestamp;
 	exports.fromTimestamp = fromTimestamp;
 
-	// Going up three levels is needed to escape the src-cov folder used for the
-	// test coverage stuff.
-	exports.sjcl = __webpack_require__(33);
-	exports.jsbn = __webpack_require__(34);
-
-	// vim:sw=2:sts=2:ts=8:et
-
 
 /***/ },
-/* 20 */
+/* 17 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var util         = __webpack_require__(37);
-	var url          = __webpack_require__(42);
-	var EventEmitter = __webpack_require__(36).EventEmitter;
+	var util         = __webpack_require__(29);
+	var url          = __webpack_require__(35);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
 	var Amount       = __webpack_require__(3).Amount;
 	var Transaction  = __webpack_require__(5).Transaction;
-	var log          = __webpack_require__(24).internal.sub('server');
 
 	/**
 	 *  @constructor Server
@@ -8411,8 +7463,8 @@ var stellar =
 
 	/**
 	 * This is the final interface between client code and a socket connection to a
-	 * `rippled` server. As such, this is a decent hook point to allow a WebSocket
-	 * interface conforming object to be used as a basis to mock rippled. This
+	 * `stellard` server. As such, this is a decent hook point to allow a WebSocket
+	 * interface conforming object to be used as a basis to mock stellard. This
 	 * avoids the need to bind a websocket server to a port and allows a more
 	 * synchronous style of code to represent a client <-> server message sequence.
 	 * We can also use this to log a message sequence to a buffer.
@@ -8422,8 +7474,8 @@ var stellar =
 
 	Server.websocketConstructor = function() {
 	  // We require this late, because websocket shims may be loaded after
-	  // ripple-lib in the browser
-	  return __webpack_require__(35);
+	  // stellar-lib in the browser
+	  return __webpack_require__(40);
 	};
 
 	/**
@@ -8435,9 +7487,6 @@ var stellar =
 
 	Server.prototype._setState = function(state) {
 	  if (state !== this._state) {
-	    if (this._remote.trace) {
-	      log.info('set_state:', state);
-	    }
 
 	    this._state = state;
 	    this.emit('state', state);
@@ -8527,7 +7576,7 @@ var stellar =
 
 	/**
 	 * Get the remote address for a server.
-	 * Incompatible with ripple-lib client build
+	 * Incompatible with stellar-lib client build
 	 */
 
 	Server.prototype._remoteAddress = function() {
@@ -8540,7 +7589,7 @@ var stellar =
 	};
 
 	/**
-	 * Disconnect from rippled WebSocket server
+	 * Disconnect from stellard WebSocket server
 	 *
 	 * @api public
 	 */
@@ -8554,7 +7603,7 @@ var stellar =
 	};
 
 	/**
-	 * Reconnect to rippled WebSocket server
+	 * Reconnect to stellard WebSocket server
 	 *
 	 * @api public
 	 */
@@ -8573,7 +7622,7 @@ var stellar =
 	};
 
 	/**
-	 * Connect to rippled WebSocket server and subscribe to events that are
+	 * Connect to stellard WebSocket server and subscribe to events that are
 	 * internally requisite. Automatically retry connections with a gradual
 	 * back-off
 	 *
@@ -8589,10 +7638,6 @@ var stellar =
 	  // we will automatically reconnect.
 	  if (this._connected) {
 	    return;
-	  }
-
-	  if (this._remote.trace) {
-	    log.info('connect:', this._opts.url);
 	  }
 
 	  // Ensure any existing socket is given the command to close first.
@@ -8628,10 +7673,6 @@ var stellar =
 	    if (ws === self._ws) {
 	      self.emit('socket_error');
 
-	      if (self._remote.trace) {
-	        log.info('onerror:', self._opts.url, e.data || e);
-	      }
-
 	      // Most connection errors for WebSockets are conveyed as 'close' events with
 	      // code 1006. This is done for security purposes and therefore unlikely to
 	      // ever change.
@@ -8652,16 +7693,13 @@ var stellar =
 
 	  ws.onclose = function onClose() {
 	    if (ws === self._ws) {
-	      if (self._remote.trace) {
-	        log.info('onclose:', self._opts.url, ws.readyState);
-	      }
 	      self._handleClose();
 	    }
 	  };
 	};
 
 	/**
-	 * Retry connection to rippled server
+	 * Retry connection to stellard server
 	 *
 	 * @api private
 	 */
@@ -8685,9 +7723,6 @@ var stellar =
 
 	  function connectionRetry() {
 	    if (self._shouldConnect) {
-	      if (self._remote.trace) {
-	        log.info('retry', self._opts.url);
-	      }
 	      self.connect();
 	    }
 	  };
@@ -8719,7 +7754,7 @@ var stellar =
 	};
 
 	/**
-	 * Handle incoming messages from rippled WebSocket server
+	 * Handle incoming messages from stellard WebSocket server
 	 *
 	 * @param {JSON-parseable} message
 	 * @api private
@@ -8791,17 +7826,10 @@ var stellar =
 	  delete this._requests[message.id];
 
 	  if (!request) {
-	    if (this._remote.trace) {
-	      log.info('UNEXPECTED:', this._opts.url, message);
-	    }
 	    return;
 	  }
 
 	  if (message.status === 'success') {
-	    if (this._remote.trace) {
-	      log.info('response:', this._opts.url, message);
-	    }
-
 	    var command = request.message.command;
 	    var result = message.result;
 	    var responseEvent = 'response_' + command;
@@ -8812,10 +7840,6 @@ var stellar =
 	      emitter.emit(responseEvent, result, request, message);
 	    });
 	  } else if (message.error) {
-	    if (this._remote.trace) {
-	      log.info('error:', this._opts.url, message);
-	    }
-
 	    var error = {
 	      error: 'remoteError',
 	      error_message: 'Remote reported an error.',
@@ -8827,9 +7851,6 @@ var stellar =
 	};
 
 	Server.prototype._handlePathFind = function(message) {
-	  if (this._remote.trace) {
-	    log.info('find_path:', this._opts.url, message);
-	  }
 	};
 
 	/**
@@ -8854,7 +7875,7 @@ var stellar =
 	};
 
 	/**
-	 * Check that received message from rippled is valid
+	 * Check that received message from stellard is valid
 	 *
 	 * @api private
 	 */
@@ -8877,7 +7898,7 @@ var stellar =
 	};
 
 	/**
-	 * Send JSON message to rippled WebSocket server
+	 * Send JSON message to stellard WebSocket server
 	 *
 	 * @param {JSON-Stringifiable} message
 	 * @api private
@@ -8885,9 +7906,6 @@ var stellar =
 
 	Server.prototype._sendMessage = function(message) {
 	  if (this._ws) {
-	    if (this._remote.trace) {
-	      log.info('request:', this._opts.url, message);
-	    }
 	    this._ws.send(JSON.stringify(message));
 	  }
 	};
@@ -8896,7 +7914,7 @@ var stellar =
 	 * Submit a Request object.
 	 *
 	 * Requests are indexed by message ID, which is repeated
-	 * in the response from rippled WebSocket server
+	 * in the response from stellard WebSocket server
 	 *
 	 * @param {Request} request
 	 * @api private
@@ -8907,9 +7925,6 @@ var stellar =
 
 	  // Only bother if we are still connected.
 	  if (!this._ws) {
-	    if (this._remote.trace) {
-	      log.info('request: DROPPING:', self._opts.url, request.message);
-	    }
 	    return;
 	  }
 
@@ -9023,12 +8038,12 @@ var stellar =
 
 
 /***/ },
-/* 21 */
+/* 18 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// This object serves as a singleton to store config options
 
-	var extend = __webpack_require__(43);
+	var extend = __webpack_require__(32);
 
 	var config = module.exports = {
 	  load: function (newOpts) {
@@ -9039,7 +8054,7 @@ var stellar =
 
 
 /***/ },
-/* 22 */
+/* 19 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// Routines for working with an orderbook.
@@ -9052,9 +8067,9 @@ var stellar =
 
 	// var network = require("./network.js");
 
-	var util         = __webpack_require__(37);
-	var EventEmitter = __webpack_require__(36).EventEmitter;
-	var extend       = __webpack_require__(43);
+	var util         = __webpack_require__(29);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
+	var extend       = __webpack_require__(32);
 	var Amount       = __webpack_require__(3).Amount;
 	var UInt160      = __webpack_require__(8).UInt160;
 	var Currency     = __webpack_require__(6).Currency;
@@ -9095,7 +8110,7 @@ var stellar =
 	      self._subs -= 1;
 	      if (!self._subs && self._remote._connected) {
 	        self._sync = false;
-	        self._remote.request_unsubscribe()
+	        self._remote.requestUnsubscribe()
 	        .books([self.to_json()])
 	        .request();
 	      }
@@ -9134,7 +8149,7 @@ var stellar =
 	  var self = this;
 
 	  if (self.is_valid() && self._subs) {
-	    var request = this._remote.request_subscribe();
+	    var request = this._remote.requestSubscribe();
 	    request.addBook(self.to_json(), true);
 
 	    request.once('success', function(res) {
@@ -9350,13 +8365,13 @@ var stellar =
 
 
 /***/ },
-/* 23 */
+/* 20 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var EventEmitter = __webpack_require__(36).EventEmitter;
-	var util         = __webpack_require__(37);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
+	var util         = __webpack_require__(29);
 	var Amount       = __webpack_require__(3).Amount;
-	var extend       = __webpack_require__(43);
+	var extend       = __webpack_require__(32);
 
 	/**
 	 * Represents a persistent path finding request.
@@ -9390,7 +8405,7 @@ var stellar =
 	PathFind.prototype.create = function () {
 	  var self = this;
 
-	  var req = this.remote.request_path_find_create(this.src_account,
+	  var req = this.remote.requestPathFindCreate(this.src_account,
 	                                                 this.dst_account,
 	                                                 this.dst_amount,
 	                                                 this.src_currencies,
@@ -9411,7 +8426,7 @@ var stellar =
 	};
 
 	PathFind.prototype.close = function () {
-	  this.remote.request_path_find_close().request();
+	  this.remote.requestPathFindClose().request();
 	  this.emit('end');
 	  this.emit('close');
 	};
@@ -9442,51 +8457,14 @@ var stellar =
 
 
 /***/ },
-/* 24 */
+/* 21 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var exports = module.exports = __webpack_require__(38);
-
-	/**
-	 * Log engine for browser consoles.
-	 *
-	 * Browsers tend to have better consoles that support nicely formatted
-	 * JavaScript objects. This connector passes objects through to the logging
-	 * function without any stringification.
-	 */
-	var InteractiveLogEngine = {
-	  logObject: function (msg, obj) {
-	    var args = Array.prototype.slice.call(arguments, 1);
-
-	    args = args.map(function(arg) {
-	      if (/MSIE/.test(navigator.userAgent)) {
-	        return JSON.stringify(arg, null, 2);
-	      } else {
-	        return arg;
-	      }
-	    });
-
-	    args.unshift(msg);
-
-	    console.log.apply(console, args);
-	  }
-	};
-
-	if (window.console && window.console.log) {
-	  exports.Log.engine = InteractiveLogEngine;
-	}
-
-
-/***/ },
-/* 25 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var util         = __webpack_require__(37);
-	var EventEmitter = __webpack_require__(36).EventEmitter;
+	var util         = __webpack_require__(29);
+	var EventEmitter = __webpack_require__(30).EventEmitter;
 	var Transaction  = __webpack_require__(5).Transaction;
-	var RippleError  = __webpack_require__(13).RippleError;
-	var PendingQueue = __webpack_require__(44).TransactionQueue;
-	var log          = __webpack_require__(24).internal.sub('transactionmanager');
+	var StellarError  = __webpack_require__(13).StellarError;
+	var PendingQueue = __webpack_require__(36).TransactionQueue;
 
 	/**
 	 * @constructor TransactionManager
@@ -9522,10 +8500,6 @@ var stellar =
 
 	    // ND: we need to check against all submissions IDs
 	    var submission = self._pending.getSubmission(hash);
-
-	    if (self._remote.trace) {
-	      log.info('transaction received:', transaction.tx_json);
-	    }
 
 	    if (submission instanceof Transaction) {
 	      // ND: A `success` handler will `finalize` this later
@@ -9673,10 +8647,6 @@ var stellar =
 
 	    pending.tx_json.Fee = newFee;
 	    pending.emit('fee_adjusted', oldFee, newFee);
-
-	    if (self._remote.trace) {
-	      log.info('fee adjusted:', pending.tx_json, oldFee, newFee);
-	    }
 	  });
 	};
 
@@ -9757,10 +8727,6 @@ var stellar =
 
 	    var hashCached = pending.findId(self._pending._idCache);
 
-	    if (self._remote.trace) {
-	      log.info('resubmit:', pending.tx_json);
-	    }
-
 	    if (hashCached) {
 	      return pending.emit('success', hashCached);
 	    }
@@ -9768,10 +8734,6 @@ var stellar =
 	    while (self._pending.hasSequence(pending.tx_json.Sequence)) {
 	      //Sequence number has been consumed by another transaction
 	      pending.tx_json.Sequence += 1;
-
-	      if (self._remote.trace) {
-	        log.info('incrementing sequence:', pending.tx_json);
-	      }
 	    }
 
 	    self._request(pending);
@@ -9828,7 +8790,7 @@ var stellar =
 	  var remote = this._remote;
 
 	  if (tx.attempts > 10) {
-	    return tx.emit('error', new RippleError('tejAttemptsExceeded'));
+	    return tx.emit('error', new StellarError('tejAttemptsExceeded'));
 	  }
 
 	  if (tx.attempts > 0 && !remote.local_signing) {
@@ -9836,17 +8798,13 @@ var stellar =
 	    + 'It is not possible to resubmit transactions automatically safely without '
 	    + 'synthesizing the transactionID locally. See `local_signing` config option';
 
-	    return tx.emit('error', new RippleError('tejLocalSigningRequired', message));
+	    return tx.emit('error', new StellarError('tejLocalSigningRequired', message));
 	  }
 
 	  tx.emit('presubmit');
 
 	  if (tx.finalized) {
 	    return;
-	  }
-
-	  if (remote.trace) {
-	    log.info('submit transaction:', tx.tx_json);
 	  }
 
 	  function transactionProposed(message) {
@@ -9934,10 +8892,6 @@ var stellar =
 
 	    tx.result = message;
 
-	    if (remote.trace) {
-	      log.info('submit response:', message);
-	    }
-
 	    tx.emit('submitted', message);
 
 	    switch (message.result.slice(0, 3)) {
@@ -9948,7 +8902,11 @@ var stellar =
 	        transactionFeeClaimed(message);
 	        break;
 	      case 'ter':
-	        transactionRetry(message);
+	        if (message.result == 'terRETRY') {
+	          transactionRetry(message);
+	        } else {
+	          transactionFailed(message);
+	        }
 	        break;
 	      case 'tef':
 	        transactionFailed(message);
@@ -9971,7 +8929,7 @@ var stellar =
 	    if (remote.local_signing) {
 	      // TODO: We are serializing twice, when we could/should be feeding the
 	      // tx_blob to `tx.hash()` which rebuilds it to sign it.
-	      submitRequest.tx_blob(tx.serialize().to_hex());
+	      submitRequest.txBlob(tx.serialize().to_hex());
 
 	      // ND: ecdsa produces a random `TxnSignature` field value, a component of
 	      // the hash. Attempting to identify a transaction via a hash synthesized
@@ -9983,9 +8941,9 @@ var stellar =
 	      // sealed and delivered, and the txn unmodified.
 	      // TODO: perhaps an exception should be raised if build_path is attempted
 	      // while local signing
-	      submitRequest.build_path(tx._build_path);
+	      submitRequest.buildPath(tx._build_path);
 	      submitRequest.secret(tx._secret);
-	      submitRequest.tx_json(tx.tx_json);
+	      submitRequest.txJson(tx.tx_json);
 	    }
 
 	    if (tx._server) {
@@ -10013,9 +8971,6 @@ var stellar =
 	    tx.emit('timeout');
 
 	    if (remote._connected) {
-	      if (remote.trace) {
-	        log.info('timeout:', tx.tx_json);
-	      }
 	      self._resubmit(3, tx);
 	    }
 	  };
@@ -10103,9 +9058,6 @@ var stellar =
 	    // ND: We can just remove this `tx` by identity
 	    self._pending.remove(tx);
 	    tx.emit('final', message);
-	    if (remote.trace) {
-	      log.info('transaction finalized:', tx.tx_json, self._pending.getLength());
-	    }
 	  };
 
 	  tx.once('cleanup', cleanup);
@@ -10123,7 +9075,7 @@ var stellar =
 	  });
 
 	  tx.once('abort', function() {
-	    tx.emit('error', new RippleError('tejAbort', 'Transaction aborted'));
+	    tx.emit('error', new StellarError('tejAbort', 'Transaction aborted'));
 	  });
 
 	  if (typeof tx.tx_json.Sequence !== 'number') {
@@ -10152,7 +9104,38 @@ var stellar =
 
 
 /***/ },
-/* 26 */
+/* 22 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/**
+	 * Prefix for hashing functions.
+	 *
+	 * These prefixes are inserted before the source material used to
+	 * generate various hashes. This is done to put each hash in its own
+	 * "space." This way, two different types of objects with the
+	 * same binary data will produce different hashes.
+	 *
+	 * Each prefix is a 4-byte value with the last byte set to zero
+	 * and the first three bytes formed from the ASCII equivalent of
+	 * some arbitrary string. For example "TXN".
+	 */
+
+	// transaction plus signature to give transaction ID
+	exports.HASH_TX_ID           = 0x54584E00; // 'TXN'
+	// transaction plus metadata
+	exports.HASH_TX_NODE         = 0x534E4400; // 'TND'
+	// inner node in tree
+	exports.HASH_INNER_NODE      = 0x4D494E00; // 'MIN'
+	// leaf node in tree
+	exports.HASH_LEAF_NODE       = 0x4D4C4E00; // 'MLN'
+	// inner transaction to sign
+	exports.HASH_TX_SIGN         = 0x53545800; // 'STX'
+	// inner transaction to sign (TESTNET)
+	exports.HASH_TX_SIGN_TESTNET = 0x73747800; // 'stx'
+
+
+/***/ },
+/* 23 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// Convert a JavaScript number to IEEE-754 Double Precision
@@ -10264,45 +9247,14 @@ var stellar =
 	}
 
 /***/ },
-/* 27 */
+/* 24 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/**
-	 * Prefix for hashing functions.
-	 *
-	 * These prefixes are inserted before the source material used to
-	 * generate various hashes. This is done to put each hash in its own
-	 * "space." This way, two different types of objects with the
-	 * same binary data will produce different hashes.
-	 *
-	 * Each prefix is a 4-byte value with the last byte set to zero
-	 * and the first three bytes formed from the ASCII equivalent of
-	 * some arbitrary string. For example "TXN".
-	 */
+	var utils   = __webpack_require__(16);
+	var sjcl    = __webpack_require__(28);
+	var config  = __webpack_require__(18);
 
-	// transaction plus signature to give transaction ID
-	exports.HASH_TX_ID           = 0x54584E00; // 'TXN'
-	// transaction plus metadata
-	exports.HASH_TX_NODE         = 0x534E4400; // 'TND'
-	// inner node in tree
-	exports.HASH_INNER_NODE      = 0x4D494E00; // 'MIN'
-	// leaf node in tree
-	exports.HASH_LEAF_NODE       = 0x4D4C4E00; // 'MLN'
-	// inner transaction to sign
-	exports.HASH_TX_SIGN         = 0x53545800; // 'STX'
-	// inner transaction to sign (TESTNET)
-	exports.HASH_TX_SIGN_TESTNET = 0x73747800; // 'stx'
-
-
-/***/ },
-/* 28 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var utils   = __webpack_require__(19);
-	var sjcl    = utils.sjcl;
-	var config  = __webpack_require__(21);
-
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
 	//
 	// Abstract UInt class
@@ -10513,7 +9465,7 @@ var stellar =
 
 	UInt.prototype.parse_bn = function(j) {
 	  if ((j instanceof sjcl.bn) && j.bitLength() <= this.constructor.width * 8) {
-	    var bytes = sjcl.codec.bytes.fromBits(j.toBits());
+	    var bytes = j.toByteArray();
 	    this._value  = new BigInteger(bytes, 256);
 	  } else {
 	    this._value = NaN;
@@ -10597,11 +9549,11 @@ var stellar =
 
 
 /***/ },
-/* 29 */
+/* 25 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var sjcl = __webpack_require__(19).sjcl;
-	var tnacl = __webpack_require__(55);
+	var sjcl = __webpack_require__(28);
+	var tnacl = __webpack_require__(43);
 
 	var UInt160 = __webpack_require__(8).UInt160;
 	var UInt256 = __webpack_require__(9).UInt256;
@@ -10693,7 +9645,7 @@ var stellar =
 
 
 /***/ },
-/* 30 */
+/* 26 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/**
@@ -10704,13 +9656,13 @@ var stellar =
 	 * SerializedObject.parse() or SerializedObject.serialize().
 	 */
 
-	var assert    = __webpack_require__(39);
-	var extend    = __webpack_require__(43);
-	var binformat = __webpack_require__(18);
-	var utils     = __webpack_require__(19);
-	var sjcl      = utils.sjcl;
+	var assert    = __webpack_require__(33);
+	var extend    = __webpack_require__(32);
+	var binformat = __webpack_require__(15);
+	var utils     = __webpack_require__(16);
+	var sjcl      = __webpack_require__(28);
 
-	var UInt128   = __webpack_require__(45).UInt128;
+	var UInt128   = __webpack_require__(37).UInt128;
 	var UInt160   = __webpack_require__(8).UInt160;
 	var UInt256   = __webpack_require__(9).UInt256;
 	var Base      = __webpack_require__(7).Base;
@@ -10723,7 +9675,7 @@ var stellar =
 	var hex = sjcl.codec.hex;
 	var bytes = sjcl.codec.bytes;
 
-	var BigInteger = utils.jsbn.BigInteger;
+	var BigInteger = __webpack_require__(31);
 
 
 	var SerializedType = function (methods) {
@@ -11448,18 +10400,18 @@ var stellar =
 
 
 /***/ },
-/* 31 */
+/* 27 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var sjcl        = __webpack_require__(19).sjcl;
+	var sjcl        = __webpack_require__(28);
 	var base        = __webpack_require__(7).Base;
 	var Seed        = __webpack_require__(10).Seed;
 	var UInt160     = __webpack_require__(8).UInt160;
 	var UInt256     = __webpack_require__(9).UInt256;
-	var request     = __webpack_require__(49);
-	var querystring = __webpack_require__(50);
-	var extend      = __webpack_require__(43);
-	var parser      = __webpack_require__(42);
+	var request     = __webpack_require__(41);
+	var querystring = __webpack_require__(42);
+	var extend      = __webpack_require__(32);
+	var parser      = __webpack_require__(35);
 	var Crypt       = { };
 
 	var cryptConfig = {
@@ -11594,7 +10546,7 @@ var stellar =
 	};
 
 	/**
-	 * Imported from ripple-client
+	 * Imported from stellar-client
 	 */
 
 
@@ -11650,7 +10602,7 @@ var stellar =
 
 
 	/**
-	 * Validate a ripple address
+	 * Validate a stellar address
 	 *
 	 * @param {string} address
 	 */
@@ -11679,7 +10631,7 @@ var stellar =
 
 
 	/**
-	 * Create a ripple address from a master key
+	 * Create a stellar address from a master key
 	 *
 	 * @param {string} masterkey
 	 */
@@ -11732,7 +10684,7 @@ var stellar =
 	Crypt.deriveRecoveryEncryptionKeyFromSecret = function(secret) {
 	  var seed = Seed.from_json(secret).to_bits();
 	  var hmac = new sjcl.misc.hmac(seed, sjcl.hash.sha512);
-	  var key  = hmac.mac('ripple/hmac/recovery_encryption_key/v1');
+	  var key  = hmac.mac('stellar/hmac/recovery_encryption_key/v1');
 	  key      = sjcl.bitArray.bitSlice(key, 0, 256);
 	  return sjcl.codec.hex.fromBits(key);
 	};
@@ -11767,7441 +10719,93 @@ var stellar =
 
 
 /***/ },
-/* 32 */
+/* 28 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var crypt   = __webpack_require__(31).Crypt;
-	var SignedRequest = __webpack_require__(46).SignedRequest;
-	var request  = __webpack_require__(49);
-	var extend   = __webpack_require__(43);
-	var async    = __webpack_require__(48);
-
-	var BlobClient = {};
-
-	//Blob object class
-	function BlobObj(url, id, key) {
-	  this.url      = url;
-	  this.id       = id;
-	  this.key      = key; 
-	  this.identity = new Identity(this);
-	  this.data     = { };
-	};
-
-	// Blob operations
-	// Do NOT change the mapping of existing ops
-	BlobObj.ops = {
-	  // Special
-	  noop: 0,
-
-	  // Simple ops
-	  set: 16,
-	  unset: 17,
-	  extend: 18,
-
-	  // Meta ops
-	  push: 32,
-	  pop: 33,
-	  shift: 34,
-	  unshift: 35,
-	  filter: 36
-	};
-
-
-	BlobObj.opsReverseMap = [ ];
-	for (var name in BlobObj.ops) {
-	  BlobObj.opsReverseMap[BlobObj.ops[name]] = name;
-	}
-
-	//Identity fields
-	var identityRoot   = 'identityVault';
-	var identityFields = [
-	  'name',
-	  'entityType',
-	  'email',
-	  'phone',
-	  'address',
-	  'nationalID',
-	  'birthday',
-	  'birthplace'
-	];
-
-	var entityTypes = [
-	  'individual',
-	  'organization',
-	  'corporation'
-	];
-
-	var addressFields = [
-	  'contact',
-	  'line1',
-	  'line2',
-	  'city',
-	  'region',  //state/province/region
-	  'postalCode',
-	  'country'
-	];
-
-	var nationalIDFields = [
-	  'number',
-	  'type',
-	  'country',
-	];
-
-	var idTypeFields = [
-	  'ssn',
-	  'taxID',
-	  'passport',
-	  'driversLicense',
-	  'other'
-	];
-
-	/**
-	 * Initialize a new blob object
-	 *
-	 * @param {function} fn - Callback function
-	 */
-
-	BlobObj.prototype.init = function(fn) {
-	  var self = this, url;
-
-	  if (self.url.indexOf('://') === -1) {
-	    self.url = 'http://' + url;
-	  }
-
-	  url = self.url + '/v1/blob/' + self.id;
-
-	  request.get(url, function(err, resp) {
-	    if (err || !resp.body || resp.body.result !== 'success') {
-	      return fn(new Error('Could not retrieve blob'));
-	    }
-	    
-	    self.revision         = resp.body.revision;
-	    self.encrypted_secret = resp.body.encrypted_secret;
-	    self.missing_fields   = resp.body.missing_fields;
-	    
-	    if (!self.decrypt(resp.body.blob)) {
-	      return fn(new Error('Error while decrypting blob'));
-	    }
-
-	    //Apply patches
-	    if (resp.body.patches && resp.body.patches.length) {
-	      var successful = true;
-	      resp.body.patches.forEach(function(patch) {
-	        successful = successful && self.applyEncryptedPatch(patch);
-	      });
-
-	      if (successful) {
-	        self.consolidate();
-	      }
-	    }
-
-	    //return with newly decrypted blob
-	    fn(null, self);
-	  }).timeout(8000);
-	};
-
-	/**
-	 * Consolidate -
-	 * Consolidate patches as a new revision
-	 *
-	 * @param {function} fn - Callback function
-	 */
-
-	BlobObj.prototype.consolidate = function(fn) {
-	  // Callback is optional
-	  if (typeof fn !== 'function') {
-	    fn = function(){};
-	  }
-
-	  //console.log('client: blob: consolidation at revision', this.revision);
-	  var encrypted = this.encrypt();
-
-	  var config = {
-	    method: 'POST',
-	    url: this.url + '/v1/blob/consolidate',
-	    dataType: 'json',
-	    data: {
-	      blob_id: this.id,
-	      data: encrypted,
-	      revision: this.revision
-	    },
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-
-	  var signed = signedRequest.signHmac(this.data.auth_secret, this.id);
-
-	  request.post(signed.url)
-	    .send(signed.data)
-	    .end(function(err, resp) {
-	      // XXX Add better error information to exception
-	      if (err) {
-	        fn(new Error('Failed to consolidate blob - XHR error'));
-	      } else if (resp.body && resp.body.result === 'success') {
-	        fn(null, resp.body);
-	      } else {
-	        fn(new Error('Failed to consolidate blob'));
-	      }
-	  });
-	};
-
-	/**
-	 * ApplyEncryptedPatch -
-	 * save changes from a downloaded patch to the blob
-	 *
-	 * @param {string} patch - encrypted patch string
-	 */
-
-	BlobObj.prototype.applyEncryptedPatch = function(patch) {
-	  try {
-	    var args = JSON.parse(crypt.decrypt(this.key, patch));
-	    var op   = args.shift();
-	    var path = args.shift();
-
-	    this.applyUpdate(op, path, args);
-	    this.revision++;
-
-	    return true;
-	  } catch (err) {
-	    //console.log('client: blob: failed to apply patch:', err.toString());
-	    //console.log(err.stack);
-	    return false;
-	  }
-	};
-
-	/**
-	 * Encrypt secret with unlock key
-	 *
-	 * @param {string} secretUnlockkey
-	 */
-	BlobObj.prototype.encryptSecret = function (secretUnlockKey, secret) {
-	  return crypt.encrypt(secretUnlockKey, secret);
-	};
-
-	/**
-	 * Decrypt secret with unlock key
-	 *
-	 * @param {string} secretUnlockkey
-	 */
-
-	BlobObj.prototype.decryptSecret = function(secretUnlockKey) {
-	  return crypt.decrypt(secretUnlockKey, this.encrypted_secret);
-	};
-
-	/**
-	 * Decrypt blob with crypt key
-	 *
-	 * @param {string} data - encrypted blob data
-	 */
-
-	BlobObj.prototype.decrypt = function(data) {
-	  try {
-	    this.data = JSON.parse(crypt.decrypt(this.key, data));
-	    return this;
-	  } catch (e) {
-	    //console.log('client: blob: decryption failed', e.toString());
-	    //console.log(e.stack);
-	    return false;
-	  }
-	};
-
-	/**
-	 * Encrypt blob with crypt key
-	 */
-
-	BlobObj.prototype.encrypt = function() {
-	// Filter Angular metadata before encryption
-	//  if ('object' === typeof this.data &&
-	//      'object' === typeof this.data.contacts)
-	//    this.data.contacts = angular.fromJson(angular.toJson(this.data.contacts));
-
-	  return crypt.encrypt(this.key, JSON.stringify(this.data));
-	};
-
-	/**
-	 * Encrypt recovery key
-	 *
-	 * @param {string} secret
-	 * @param {string} blobDecryptKey
-	 */
-
-	BlobObj.prototype.encryptBlobCrypt = function(secret, blobDecryptKey) {
-	  var recoveryEncryptionKey = crypt.deriveRecoveryEncryptionKeyFromSecret(secret);
-	  return crypt.encrypt(recoveryEncryptionKey, blobDecryptKey);
-	};
-
-	/**
-	 * Decrypt recovery key
-	 *
-	 * @param {string} secret
-	 * @param {string} encryptedKey
-	 */
-
-	function decryptBlobCrypt (secret, encryptedKey) {
-	  var recoveryEncryptionKey = crypt.deriveRecoveryEncryptionKeyFromSecret(secret);
-	  return crypt.decrypt(recoveryEncryptionKey, encryptedKey);
-	};
-
-	/**** Blob updating functions ****/
-
-	/**
-	 * Set blob element
-	 */
-
-	BlobObj.prototype.set = function(pointer, value, fn) {
-	  if (pointer == "/" + identityRoot && this.data[identityRoot]) {
-	    return fn(new Error('Cannot overwrite Identity Vault')); 
-	  }
-	    
-	  this.applyUpdate('set', pointer, [value]);
-	  this.postUpdate('set', pointer, [value], fn);
-	};
-
-	/**
-	 * Remove blob element
-	 */
-
-	BlobObj.prototype.unset = function(pointer, fn) {
-	  if (pointer == "/" + identityRoot) {
-	    return fn(new Error('Cannot remove Identity Vault')); 
-	  }
-	  
-	  this.applyUpdate('unset', pointer, []);
-	  this.postUpdate('unset', pointer, [], fn);
-	};
-
-	/**
-	 * Extend blob object
-	 */
-
-	BlobObj.prototype.extend = function(pointer, value, fn) {
-	  this.applyUpdate('extend', pointer, [value]);
-	  this.postUpdate('extend', pointer, [value], fn);
-	};
-
-	/**
-	 * Prepend blob array
-	 */
-
-	BlobObj.prototype.unshift = function(pointer, value, fn) {    
-	  this.applyUpdate('unshift', pointer, [value]);
-	  this.postUpdate('unshift', pointer, [value], fn);
-	};
-
-	/**
-	 * Filter the row(s) from an array.
-	 *
-	 * This method will find any entries from the array stored under `pointer` and
-	 * apply the `subcommands` to each of them.
-	 *
-	 * The subcommands can be any commands with the pointer parameter left out.
-	 */
-
-	BlobObj.prototype.filter = function(pointer, field, value, subcommands, callback) {
-	  var args = Array.prototype.slice.apply(arguments);
-
-	  if (typeof args[args.length - 1] === 'function') {
-	    callback = args.pop();
-	  }
-
-	  args.shift();
-
-	  // Normalize subcommands to minimize the patch size
-	  args = args.slice(0, 2).concat(normalizeSubcommands(args.slice(2), true));
-
-	  this.applyUpdate('filter', pointer, args);
-	  this.postUpdate('filter', pointer, args, callback);
-	};
-
-	/**
-	 * Apply udpdate to the blob
-	 */
-
-	BlobObj.prototype.applyUpdate = function(op, path, params) {
-	  // Exchange from numeric op code to string
-	  if (typeof op === 'number') {
-	    op = BlobObj.opsReverseMap[op];
-	  }
-
-	  if (typeof op !== 'string') {
-	    throw new Error('Blob update op code must be a number or a valid op id string');
-	  }
-
-	  // Separate each step in the 'pointer'
-	  var pointer = path.split('/');
-	  var first = pointer.shift();
-
-	  if (first !== '') {
-	    throw new Error('Invalid JSON pointer: '+path);
-	  }
-
-	  this._traverse(this.data, pointer, path, op, params);
-	};
-
-	//for applyUpdate function
-	BlobObj.prototype._traverse = function(context, pointer, originalPointer, op, params) {
-	  var _this = this;
-	  var part = _this.unescapeToken(pointer.shift());
-
-	  if (Array.isArray(context)) {
-	    if (part === '-') {
-	      part = context.length;
-	    } else if (part % 1 !== 0 && part >= 0) {
-	      throw new Error('Invalid pointer, array element segments must be a positive integer, zero or '-'');
-	    }
-	  } else if (typeof context !== 'object') {
-	    return null;
-	  } else if (!context.hasOwnProperty(part)) {
-	    // Some opcodes create the path as they're going along
-	    if (op === 'set') {
-	      context[part] = {};
-	    } else if (op === 'unshift') {
-	      context[part] = [];
-	    } else {
-	      return null;
-	    }
-	  }
-
-	  if (pointer.length !== 0) {
-	    return this._traverse(context[part], pointer, originalPointer, op, params);
-	  }
-
-	  switch (op) {
-	    case 'set':
-	      context[part] = params[0];
-	      break;
-	    case 'unset':
-	      if (Array.isArray(context)) {
-	        context.splice(part, 1);
-	      } else {
-	        delete context[part];
-	      }
-	      break;
-	    case 'extend':
-	      if (typeof context[part] !== 'object') {
-	        throw new Error('Tried to extend a non-object');
-	      }
-	      extend(true, context[part], params[0]);
-	      break;
-	    case 'unshift':
-	      if (typeof context[part] === 'undefined') {
-	        context[part] = [ ];
-	      } else if (!Array.isArray(context[part])) {
-	        throw new Error('Operator "unshift" must be applied to an array.');
-	      }
-	      context[part].unshift(params[0]);
-	      break;
-	    case 'filter':
-	      if (Array.isArray(context[part])) {
-	        context[part].forEach(function(element, i) {
-	          if (typeof element === 'object' && element.hasOwnProperty(params[0]) && element[params[0]] === params[1]) {
-	            var subpointer = originalPointer + '/' + i;
-	            var subcommands = normalizeSubcommands(params.slice(2));
-
-	            subcommands.forEach(function(subcommand) {
-	              var op = subcommand[0];
-	              var pointer = subpointer + subcommand[1];
-	              _this.applyUpdate(op, pointer, subcommand.slice(2));
-	            });
-	          }
-	        });
-	      }
-	      break;
-	    default:
-	      throw new Error('Unsupported op '+op);
-	  }
-	};
-
-	BlobObj.prototype.escapeToken = function(token) {
-	  return token.replace(/[~\/]/g, function(key) {
-	    return key === '~' ? '~0' : '~1';
-	  });
-	};
-
-	BlobObj.prototype.unescapeToken = function(str) {
-	  return str.replace(/~./g, function(m) {
-	    switch (m) {
-	      case '~0':
-	        return '~';
-	      case '~1':
-	        return '/';
-	    }
-	    throw new Error('Invalid tilde escape: ' + m);
-	  });
-	};
-
-	/**
-	 * Sumbit update to blob vault
-	 */
-
-	BlobObj.prototype.postUpdate = function(op, pointer, params, fn) {
-	  // Callback is optional
-	  if (typeof fn !== 'function') {
-	    fn = function(){};
-	  }
-
-	  if (typeof op === 'string') {
-	    op = BlobObj.ops[op];
-	  }
-
-	  if (typeof op !== 'number') {
-	    throw new Error('Blob update op code must be a number or a valid op id string');
-	  }
-
-	  if (op < 0 || op > 255) {
-	    throw new Error('Blob update op code out of bounds');
-	  }
-
-	  //console.log('client: blob: submitting update', BlobObj.opsReverseMap[op], pointer, params);
-
-	  params.unshift(pointer);
-	  params.unshift(op);
-
-	  var config = {
-	    method: 'POST',
-	    url: this.url + '/v1/blob/patch',
-	    dataType: 'json',
-	    data: {
-	      blob_id: this.id,
-	      patch: crypt.encrypt(this.key, JSON.stringify(params))
-	    }
-	  };
-
-
-	  var signedRequest = new SignedRequest(config);
-
-	  var signed = signedRequest.signHmac(this.data.auth_secret, this.id);
-
-	  request.post(signed.url)
-	  .send(signed.data)
-	  .end(function(err, resp) {
-	    if (err) {
-	      fn(new Error('Patch could not be saved - XHR error'));
-	    } else if (!resp.body || resp.body.result !== 'success') {
-	      fn(new Error('Patch could not be saved - bad result')); 
-	    } else {
-	      fn(null, resp.body);
-	    }
-	  });
-	};
-
-	/***** helper functions *****/
-
-	function normalizeSubcommands(subcommands, compress) {
-	  // Normalize parameter structure
-	  if (/(number|string)/.test(typeof subcommands[0])) {
-	    // Case 1: Single subcommand inline
-	    subcommands = [subcommands];
-	  } else if (subcommands.length === 1 && Array.isArray(subcommands[0]) && /(number|string)/.test(typeof subcommands[0][0])) {
-	    // Case 2: Single subcommand as array
-	    // (nothing to do)
-	  } else if (Array.isArray(subcommands[0])) {
-	    // Case 3: Multiple subcommands as array of arrays
-	    subcommands = subcommands[0];
-	  }
-
-	  // Normalize op name and convert strings to numeric codes
-	  subcommands = subcommands.map(function(subcommand) {
-	    if (typeof subcommand[0] === 'string') {
-	      subcommand[0] = BlobObj.ops[subcommand[0]];
-	    }
-
-	    if (typeof subcommand[0] !== 'number') {
-	      throw new Error('Invalid op in subcommand');
-	    }
-
-	    if (typeof subcommand[1] !== 'string') {
-	      throw new Error('Invalid path in subcommand');
-	    }
-
-	    return subcommand;
-	  });
-
-	  if (compress) {
-	    // Convert to the minimal possible format
-	    if (subcommands.length === 1) {
-	      return subcommands[0];
-	    } else {
-	      return [subcommands];
-	    }
-	  } else {
-	    return subcommands;
-	  }
-	}
-
-
-	/***** identity ****/
-
-	/** 
-	 * Identity class
-	 * 
-	 */
-
-	var Identity = function (blob) {
-	  this._getBlob = function() {
-	    return blob;
-	  };
-	}; 
-
-	/**
-	 * getFullAddress
-	 * returns the address formed into a text string
-	 * @param {string} key - Encryption key
-	 */
-
-	Identity.prototype.getFullAddress = function (key) {
-	  var blob = this._getBlob();
-	  if (!blob || 
-	      !blob.data || 
-	      !blob.data[identityRoot] ||
-	      !blob.data[identityRoot].address) {
-	    return "";
-	  }     
-	  
-	  var address = this.get('address', key);
-	  var text    = "";
-	  
-	  if (address.value.contact)    text += address.value.contact;
-	  if (address.value.line1)      text += " " + address.value.line1;
-	  if (address.value.line2)      text += " " + address.value.line2;
-	  if (address.value.city)       text += " " + address.value.city;
-	  if (address.value.region)     text += " " + address.value.region;
-	  if (address.value.postalCode) text += " " + address.value.postalCode;
-	  if (address.value.country)    text += " " + address.value.country;
-	  return text;
-	};
-
-	/**
-	 * getAll
-	 * get and decrypt all identity fields
-	 * @param {string} key  - Encryption key
-	 * @param {function} fn - Callback function
-	 */
-
-	Identity.prototype.getAll = function (key) {
-	  var blob = this._getBlob();
-	  if (!blob || !blob.data || !blob.data[identityRoot]) {
-	    return {};
-	  }   
-	  
-	  var result = {}, identity = blob.data[identityRoot];
-	  for (var i in identity) {
-	    result[i] = this.get(i, key);
-	  }
-	  
-	  return result;
-	};
-
-	/**
-	 * get
-	 * get and decrypt a single identity field
-	 * @param {string} pointer - Field to retrieve
-	 * @param {string} key     - Encryption key
-	 */
-
-	Identity.prototype.get = function (pointer, key) {
-	  var blob = this._getBlob();
-	  if (!blob || !blob.data || !blob.data[identityRoot]) {
-	    return null;
-	  }
-	  
-	  var data = blob.data[identityRoot][pointer];
-	  if (data && data.encrypted) {
-	    return decrypt(key, data);
-	    
-	  } else if (data) {
-	    return data;
-	    
-	  } else {
-	    return null;
-	  }
-	  
-	  function decrypt (key, data) {
-	    var value;
-	    var result = {encrypted : true};
-	    
-	    try {
-	      value = crypt.decrypt(key, data.value);
-	    } catch (e) {
-	      result.value  = data.value;
-	      result.error  = e; 
-	      return result;
-	    }
-	    
-	    try {
-	      result.value = JSON.parse(value);
-	    } catch (e) {
-	      result.value = value;
-	    }
-	    
-	    return result;
-	  }
-	};
-
-	/**
-	 * set
-	 * set and encrypt a single identity field.
-	 * @param {string} pointer - Field to set
-	 * @param {string} key     - Encryption key
-	 * @param {string} value   - Unencrypted data
-	 * @param {function} fn    - Callback function
-	 */
-
-	Identity.prototype.set = function (pointer, key, value, fn) {
-	  var self = this, blob = this._getBlob();
-	  
-	  if (!fn) fn = function(){ };
-	  
-	  //check fields for validity
-	  if (identityFields.indexOf(pointer) === -1) {
-	    return fn(new Error("invalid identity field"));   
-	  
-	  //validate address fields  
-	  } else if (pointer === 'address') {
-	    if (typeof value !== 'object') {
-	      return fn(new Error("address must be an object"));   
-	    }
-	    
-	    for (var addressField in value) {
-	      if (addressFields.indexOf(addressField) === -1) {
-	        return fn(new Error("invalid address field"));   
-	      }
-	    }
-	  
-	  //validate nationalID fields  
-	  } else if (pointer === 'nationalID') {
-	    if (typeof value !== 'object') {
-	      return fn(new Error("nationalID must be an object"));   
-	    }
-	    
-	    for (var idField in value) {
-	      if (nationalIDFields.indexOf(idField) === -1) {
-	        return fn(new Error("invalid nationalID field"));   
-	      }
-	      
-	      if (idField === 'type') {
-	        if (idTypeFields.indexOf(value[idField]) === -1) {
-	          return fn(new Error("invalid nationalID type"));   
-	        }      
-	      }
-	    }   
-	    
-	  //validate entity type   
-	  } else if (pointer === 'entityType') {
-	    if (entityTypes.indexOf(value) === -1) {
-	      return fn(new Error("invalid entity type"));   
-	    }     
-	  }
-
-	  async.waterfall([ validate, set ], fn);
-	    
-	  //make sure the identity setup is valid
-	  function validate (callback) {
-	   
-	    if (!blob) return fn(new Error("Identity must be associated with a blob"));
-	    else if (!blob.data) return fn(new Error("Invalid Blob"));  
-	    else if (!blob.data[identityRoot]) {
-	      blob.set("/" + identityRoot, {}, function(err, res){
-	        if (err) return callback (err);
-	        else     return callback (null);
-	      }); 
-	    } else return callback (null);
-	  };
-	    
-	  function set (callback) {
-
-	    //NOTE: currently we will overwrite if it already exists
-	    //the other option would be to require decrypting with the
-	    //existing key as a form of authorization
-	    //var current = self.get(pointer, key);  
-	    //if (current && current.error) {
-	    //  return fn ? fn(current.error) : undefined;
-	    //}
-	    
-	    var data = {};
-	    data[pointer] = {
-	      encrypted : key ? true : false,
-	      value     : key ? encrypt(key, value) : value  
-	    };
-	    
-	    self._getBlob().extend("/" + identityRoot, data, callback);
-	  };
-	  
-	  function encrypt (key, value) {
-	    if (typeof value === 'object') value = JSON.stringify(value);
-	    return crypt.encrypt(key, value);
-	  }
-	};
-
-	/**
-	 * unset
-	 * remove a single identity field - will only be removed
-	 * with a valid decryption key
-	 * @param {string} pointer - Field to remove
-	 * @param {string} key     - Encryption key
-	 * @param {function} fn    - Callback function
-	 */
-
-	Identity.prototype.unset = function (pointer, key, fn) {
-	  
-	  if (!fn) fn = function(){ };
-	  
-	  //NOTE: this is rather useless since you can overwrite
-	  //without an encryption key
-	  var data = this.get(pointer, key);
-	  if (data && data.error) {
-	    return fn(data.error);
-	  }
-	  
-	  this._getBlob().unset("/" + identityRoot+"/" + pointer, fn);
-	};
-
-	/***** blob client methods ****/
-
-	/**
-	 * Blob object class
-	 */ 
-	 
-	exports.Blob = BlobObj;
-
-	/**
-	 * Get ripple name for a given address
-	 */
-
-	exports.getRippleName = function(url, address, fn) {
-	  if (!crypt.isValidAddress(address)) {
-	    return fn (new Error('Invalid ripple address'));
-	  }
-
-	  if (!crypt.isValidAddress(address)) return fn (new Error("Invalid ripple address"));
-	  request.get(url + '/v1/user/' + address, function(err, resp){
-	    if (err) {
-	      fn(new Error('Unable to access vault sever'));
-	    } else if (resp.body && resp.body.username) {
-	      fn(null, resp.body.username);
-	    } else if (resp.body && resp.body.exists === false) {
-	      fn (new Error('No ripple name for this address'));
-	    } else {
-	      fn(new Error('Unable to determine if ripple name exists'));
-	    }
-	  });
-	};
-
-	/**
-	 * Retrive a blob with url, id and key
-	 */
-
-	BlobClient.get = function (url, id, crypt, fn) {
-	  var blob = new BlobObj(url, id, crypt);
-	  blob.init(fn);
-	};
-
-	/**
-	 * Verify email address
-	 */
-
-	BlobClient.verify = function(url, username, token, fn) {
-	  url += '/v1/user/' + username + '/verify/' + token;
-	  request.get(url, function(err, resp) {
-	    if (err) {    
-	      fn(new Error("Failed to verify the account - XHR error"));
-	    } else if (resp.body && resp.body.result === 'success') {
-	      fn(null, resp.body);
-	    } else {
-	      fn(new Error('Failed to verify the account'));
-	    }
-	  });
-	};
-
-	/**
-	 * ResendEmail
-	 * resend verification email
-	 */
-
-	BlobClient.resendEmail = function (opts, fn) {
-	  var config = {
-	    method : 'POST',
-	    url    : opts.url + '/v1/user/email',
-	    data   : {
-	      blob_id  : opts.id,
-	      username : opts.username,
-	      email    : opts.email,
-	      hostlink : opts.activateLink
-	    }
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-	  var signed = signedRequest.signAsymmetric(opts.masterkey, opts.account_id, opts.id);
-
-	  request.post(signed.url)
-	    .send(signed.data)
-	    .end(function(err, resp) {
-	      if (err) {
-	        console.log("blob: could not resend the token:", err);
-	        fn(new Error("Failed to resend the token"));
-	      } else if (resp.body && resp.body.result === 'success') {
-	        fn(null, resp.body);
-	      } else if (resp.body && resp.body.result === 'error') {
-	        console.log("blob: could not resend the token:", resp.body.message);
-	        fn(new Error("Failed to resend the token"));
-	      } else {
-	        fn(new Error("Failed to resend the token")); 
-	      }
-	    });
-	};
-
-	/**
-	 * RecoverBlob
-	 * recover a blob using the account secret
-	 * @param {object} opts
-	 * @param {string} opts.url
-	 * @param {string} opts.username
-	 * @param {string} opts.masterkey
-	 * @param {function} fn
-	 */
-
-	BlobClient.recoverBlob = function (opts, fn) {
-	  var username = String(opts.username).trim();
-	  var config   = {
-	    method : 'GET',
-	    url    : opts.url + '/v1/user/recov/' + username,
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-	  var signed = signedRequest.signAsymmetricRecovery(opts.masterkey, username);  
-
-	  request.get(signed.url)
-	    .end(function(err, resp) {
-	      if (err) {
-	        fn(err);
-	      } else if (resp.body && resp.body.result === 'success') {
-	        if (!resp.body.encrypted_blobdecrypt_key) {
-	          fn(new Error('Missing encrypted blob decrypt key.'));      
-	        } else {
-	          handleRecovery(resp);  
-	        }       
-	      } else if (resp.body && resp.body.result === 'error') {
-	        fn(new Error(resp.body.message)); 
-	      } else {
-	        fn(new Error('Could not recover blob'));
-	      }
-	    });
-	    
-	  function handleRecovery (resp) {
-	    //decrypt crypt key
-	    var crypt = decryptBlobCrypt(opts.masterkey, resp.body.encrypted_blobdecrypt_key);
-	    var blob  = new BlobObj(opts.url, resp.body.blob_id, crypt);
-	    
-	    blob.revision = resp.body.revision;
-	    blob.encrypted_secret = resp.body.encrypted_secret;
-
-	    if (!blob.decrypt(resp.body.blob)) {
-	      return fn(new Error('Error while decrypting blob'));
-	    }
-
-	    //Apply patches
-	    if (resp.body.patches && resp.body.patches.length) {
-	      var successful = true;
-	      resp.body.patches.forEach(function(patch) {
-	        successful = successful && blob.applyEncryptedPatch(patch);
-	      });
-
-	      if (successful) {
-	        blob.consolidate();
-	      }
-	    }
-
-	    //return with newly decrypted blob
-	    fn(null, blob);
-	  };
-	};
-
-	/**
-	 * updateKeys
-	 * Change the blob encryption keys
-	 * @param {object} opts
-	 * @param {string} opts.username
-	 * @param {object} opts.keys
-	 * @param {object} opts.blob
-	 * @param {string} masterkey
-	 */
-
-	BlobClient.updateKeys = function (opts, fn) {
-	  var old_id    = opts.blob.id;
-	  opts.blob.id  = opts.keys.id;
-	  opts.blob.key = opts.keys.crypt;
-	  opts.blob.encrypted_secret = opts.blob.encryptSecret(opts.keys.unlock, opts.masterkey);
-	  
-	  var config = {
-	    method : 'POST',
-	    url    : opts.blob.url + '/v1/user/' + opts.username + '/updatekeys',
-	    data   : {
-	      blob_id  : opts.blob.id,
-	      data     : opts.blob.encrypt(),
-	      revision : opts.blob.revision,
-	      encrypted_secret : opts.blob.encrypted_secret,
-	      encrypted_blobdecrypt_key : opts.blob.encryptBlobCrypt(opts.masterkey, opts.keys.crypt),
-	    }
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-	  var signed = signedRequest.signAsymmetric(opts.masterkey, opts.blob.data.account_id, old_id); 
-
-	  request.post(signed.url)
-	    .send(signed.data)
-	    .end(function(err, resp) {
-	      if (err) {
-	        console.log("blob: could not update blob:", err);
-	        fn(new Error('Failed to update blob - XHR error'));
-	      } else if (!resp.body || resp.body.result !== 'success') {
-	        console.log("blob: could not update blob:", resp.body ? resp.body.message : null);
-	        fn(new Error('Failed to update blob - bad result')); 
-	      } else {
-	        fn(null, resp.body);
-	      }
-	    });     
-	}; 
-	 
-	/**
-	 * rename
-	 * Change the username
-	 * @param {object} opts
-	 * @param {string} opts.username
-	 * @param {string} opts.new_username
-	 * @param {object} opts.keys
-	 * @param {object} opts.blob
-	 * @param {string} masterkey
-	 */
-
-	BlobClient.rename = function (opts, fn) {
-	  var old_id    = opts.blob.id;
-	  opts.blob.id  = opts.keys.id;
-	  opts.blob.key = opts.keys.crypt;
-	  opts.blob.encryptedSecret = opts.blob.encryptSecret(opts.keys.unlock, opts.masterkey);
-
-	  var config = {
-	    method: 'POST',
-	    url: opts.blob.url + '/v1/user/' + opts.username + '/rename',
-	    data: {
-	      blob_id  : opts.blob.id,
-	      username : opts.new_username,
-	      data     : opts.blob.encrypt(),
-	      revision : opts.blob.revision,
-	      encrypted_secret : opts.blob.encryptedSecret,
-	      encrypted_blobdecrypt_key : opts.blob.encryptBlobCrypt(opts.masterkey, opts.keys.crypt)
-	    }
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-	  var signed = signedRequest.signAsymmetric(opts.masterkey, opts.blob.data.account_id, old_id);
-
-	  request.post(signed.url)
-	    .send(signed.data)
-	    .end(function(err, resp) {
-	      if (err) {
-	        console.log("blob: could not rename:", err);
-	        fn(new Error("Failed to rename"));
-	      } else if (resp.body && resp.body.result === 'success') {
-	        fn(null, resp.body);
-	      } else if (resp.body && resp.body.result === 'error') {
-	        console.log("blob: could not rename:", resp.body.message);
-	        fn(new Error("Failed to rename"));
-	      } else {
-	        fn(new Error("Failed to rename"));
-	      }
-	    });
-	};
-
-	/**
-	 * Create a blob object
-	 *
-	 * @param {object} options
-	 * @param {string} options.url
-	 * @param {string} options.id
-	 * @param {string} options.crypt
-	 * @param {string} options.unlock
-	 * @param {string} options.username
-	 * @param {string} options.masterkey
-	 * @param {object} options.oldUserBlob
-	 * @param {function} fn
-	 */
-
-	BlobClient.create = function(options, fn) {
-	  var blob = new BlobObj(options.url, options.id, options.crypt);
-
-	  blob.revision = 0;
-
-	  blob.data = {
-	    auth_secret : crypt.createSecret(8),
-	    account_id  : crypt.getAddress(options.masterkey),
-	    email       : options.email,
-	    contacts    : [],
-	    created     : (new Date()).toJSON()
-	  };
-
-	  blob.encrypted_secret = blob.encryptSecret(options.unlock, options.masterkey);
-
-	  // Migration
-	  if (options.oldUserBlob) {
-	    blob.data.contacts = options.oldUserBlob.data.contacts;
-	  }
-
-	  //post to the blob vault to create
-	  var config = {
-	    method : 'POST',
-	    url    : options.url + '/v1/user',
-	    data   : {
-	      blob_id     : options.id,
-	      username    : options.username,
-	      address     : blob.data.account_id,
-	      auth_secret : blob.data.auth_secret,
-	      data        : blob.encrypt(),
-	      email       : options.email,
-	      hostlink    : options.activateLink,
-	      domain      : options.domain,
-	      encrypted_blobdecrypt_key : blob.encryptBlobCrypt(options.masterkey, options.crypt),
-	      encrypted_secret : blob.encrypted_secret
-	    }
-	  };
-
-	  var signedRequest = new SignedRequest(config);
-	  var signed = signedRequest.signAsymmetric(options.masterkey, blob.data.account_id, options.id);
-
-	  request.post(signed.url)
-	    .send(signed.data)
-	    .end(function(err, resp) {
-	      if (err) {
-	        fn(err);
-	      } else if (resp.body && resp.body.result === 'success') {
-	        fn(null, blob, resp.body);
-	      } else if (resp.body && resp.body.result === 'error') {
-	        fn(new Error(resp.body.message)); 
-	      } else {
-	        fn(new Error('Could not create blob'));
-	      }
-	    });
-	};
-
-	exports.BlobClient = BlobClient;
+	"use strict";function q(a){throw a;}var u=void 0,v=!1;var sjcl={cipher:{},hash:{},keyexchange:{},mode:{},misc:{},codec:{},exception:{corrupt:function(a){this.toString=function(){return"CORRUPT: "+this.message};this.message=a},invalid:function(a){this.toString=function(){return"INVALID: "+this.message};this.message=a},bug:function(a){this.toString=function(){return"BUG: "+this.message};this.message=a},notReady:function(a){this.toString=function(){return"NOT READY: "+this.message};this.message=a}}};
+	"undefined"!==typeof module&&module.exports&&(module.exports=sjcl);
+	sjcl.cipher.aes=function(a){this.p[0][0][0]||this.u();var b,c,d,e,f=this.p[0][4],g=this.p[1];b=a.length;var h=1;4!==b&&(6!==b&&8!==b)&&q(new sjcl.exception.invalid("invalid aes key size"));this.b=[d=a.slice(0),e=[]];for(a=b;a<4*b+28;a++){c=d[a-1];if(0===a%b||8===b&&4===a%b)c=f[c>>>24]<<24^f[c>>16&255]<<16^f[c>>8&255]<<8^f[c&255],0===a%b&&(c=c<<8^c>>>24^h<<24,h=h<<1^283*(h>>7));d[a]=d[a-b]^c}for(b=0;a;b++,a--)c=d[b&3?a:a-4],e[b]=4>=a||4>b?c:g[0][f[c>>>24]]^g[1][f[c>>16&255]]^g[2][f[c>>8&255]]^g[3][f[c&
+	255]]};
+	sjcl.cipher.aes.prototype={encrypt:function(a){return aa(this,a,0)},decrypt:function(a){return aa(this,a,1)},p:[[[],[],[],[],[]],[[],[],[],[],[]]],u:function(){var a=this.p[0],b=this.p[1],c=a[4],d=b[4],e,f,g,h=[],k=[],l,n,m,p;for(e=0;0x100>e;e++)k[(h[e]=e<<1^283*(e>>7))^e]=e;for(f=g=0;!c[f];f^=l||1,g=k[g]||1){m=g^g<<1^g<<2^g<<3^g<<4;m=m>>8^m&255^99;c[f]=m;d[m]=f;n=h[e=h[l=h[f]]];p=0x1010101*n^0x10001*e^0x101*l^0x1010100*f;n=0x101*h[m]^0x1010100*m;for(e=0;4>e;e++)a[e][f]=n=n<<24^n>>>8,b[e][m]=p=p<<24^p>>>8}for(e=
+	0;5>e;e++)a[e]=a[e].slice(0),b[e]=b[e].slice(0)}};
+	function aa(a,b,c){4!==b.length&&q(new sjcl.exception.invalid("invalid aes block size"));var d=a.b[c],e=b[0]^d[0],f=b[c?3:1]^d[1],g=b[2]^d[2];b=b[c?1:3]^d[3];var h,k,l,n=d.length/4-2,m,p=4,s=[0,0,0,0];h=a.p[c];a=h[0];var r=h[1],D=h[2],F=h[3],E=h[4];for(m=0;m<n;m++)h=a[e>>>24]^r[f>>16&255]^D[g>>8&255]^F[b&255]^d[p],k=a[f>>>24]^r[g>>16&255]^D[b>>8&255]^F[e&255]^d[p+1],l=a[g>>>24]^r[b>>16&255]^D[e>>8&255]^F[f&255]^d[p+2],b=a[b>>>24]^r[e>>16&255]^D[f>>8&255]^F[g&255]^d[p+3],p+=4,e=h,f=k,g=l;for(m=0;4>
+	m;m++)s[c?3&-m:m]=E[e>>>24]<<24^E[f>>16&255]<<16^E[g>>8&255]<<8^E[b&255]^d[p++],h=e,e=f,f=g,g=b,b=h;return s}
+	sjcl.bitArray={bitSlice:function(a,b,c){a=sjcl.bitArray.R(a.slice(b/32),32-(b&31)).slice(1);return c===u?a:sjcl.bitArray.clamp(a,c-b)},extract:function(a,b,c){var d=Math.floor(-b-c&31);return((b+c-1^b)&-32?a[b/32|0]<<32-d^a[b/32+1|0]>>>d:a[b/32|0]>>>d)&(1<<c)-1},concat:function(a,b){if(0===a.length||0===b.length)return a.concat(b);var c=a[a.length-1],d=sjcl.bitArray.getPartial(c);return 32===d?a.concat(b):sjcl.bitArray.R(b,d,c|0,a.slice(0,a.length-1))},bitLength:function(a){var b=a.length;return 0===
+	b?0:32*(b-1)+sjcl.bitArray.getPartial(a[b-1])},clamp:function(a,b){if(32*a.length<b)return a;a=a.slice(0,Math.ceil(b/32));var c=a.length;b&=31;0<c&&b&&(a[c-1]=sjcl.bitArray.partial(b,a[c-1]&2147483648>>b-1,1));return a},partial:function(a,b,c){return 32===a?b:(c?b|0:b<<32-a)+0x10000000000*a},getPartial:function(a){return Math.round(a/0x10000000000)||32},equal:function(a,b){if(sjcl.bitArray.bitLength(a)!==sjcl.bitArray.bitLength(b))return v;var c=0,d;for(d=0;d<a.length;d++)c|=a[d]^b[d];return 0===
+	c},R:function(a,b,c,d){var e;e=0;for(d===u&&(d=[]);32<=b;b-=32)d.push(c),c=0;if(0===b)return d.concat(a);for(e=0;e<a.length;e++)d.push(c|a[e]>>>b),c=a[e]<<32-b;e=a.length?a[a.length-1]:0;a=sjcl.bitArray.getPartial(e);d.push(sjcl.bitArray.partial(b+a&31,32<b+a?c:d.pop(),1));return d},q:function(a,b){return[a[0]^b[0],a[1]^b[1],a[2]^b[2],a[3]^b[3]]}};
+	sjcl.codec.utf8String={fromBits:function(a){var b="",c=sjcl.bitArray.bitLength(a),d,e;for(d=0;d<c/8;d++)0===(d&3)&&(e=a[d/4]),b+=String.fromCharCode(e>>>24),e<<=8;return decodeURIComponent(escape(b))},toBits:function(a){a=unescape(encodeURIComponent(a));var b=[],c,d=0;for(c=0;c<a.length;c++)d=d<<8|a.charCodeAt(c),3===(c&3)&&(b.push(d),d=0);c&3&&b.push(sjcl.bitArray.partial(8*(c&3),d));return b}};
+	sjcl.codec.hex={fromBits:function(a){var b="",c;for(c=0;c<a.length;c++)b+=((a[c]|0)+0xf00000000000).toString(16).substr(4);return b.substr(0,sjcl.bitArray.bitLength(a)/4)},toBits:function(a){var b,c=[],d;a=a.replace(/\s|0x/g,"");d=a.length;a+="00000000";for(b=0;b<a.length;b+=8)c.push(parseInt(a.substr(b,8),16)^0);return sjcl.bitArray.clamp(c,4*d)}};
+	sjcl.codec.base64={M:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",fromBits:function(a,b,c){var d="",e=0,f=sjcl.codec.base64.M,g=0,h=sjcl.bitArray.bitLength(a);c&&(f=f.substr(0,62)+"-_");for(c=0;6*d.length<h;)d+=f.charAt((g^a[c]>>>e)>>>26),6>e?(g=a[c]<<6-e,e+=26,c++):(g<<=6,e-=6);for(;d.length&3&&!b;)d+="=";return d},toBits:function(a,b){a=a.replace(/\s|=/g,"");var c=[],d,e=0,f=sjcl.codec.base64.M,g=0,h;b&&(f=f.substr(0,62)+"-_");for(d=0;d<a.length;d++)h=f.indexOf(a.charAt(d)),
+	0>h&&q(new sjcl.exception.invalid("this isn't base64!")),26<e?(e-=26,c.push(g^h>>>e),g=h<<32-e):(e+=6,g^=h<<32-e);e&56&&c.push(sjcl.bitArray.partial(e&56,g,1));return c}};sjcl.codec.base64url={fromBits:function(a){return sjcl.codec.base64.fromBits(a,1,1)},toBits:function(a){return sjcl.codec.base64.toBits(a,1)}};sjcl.hash.sha256=function(a){this.b[0]||this.u();a?(this.e=a.e.slice(0),this.c=a.c.slice(0),this.a=a.a):this.reset()};sjcl.hash.sha256.hash=function(a){return(new sjcl.hash.sha256).update(a).finalize()};
+	sjcl.hash.sha256.prototype={blockSize:512,reset:function(){this.e=this.i.slice(0);this.c=[];this.a=0;return this},update:function(a){"string"===typeof a&&(a=sjcl.codec.utf8String.toBits(a));var b,c=this.c=sjcl.bitArray.concat(this.c,a);b=this.a;a=this.a=b+sjcl.bitArray.bitLength(a);for(b=512+b&-512;b<=a;b+=512)this.h(c.splice(0,16));return this},finalize:function(){var a,b=this.c,c=this.e,b=sjcl.bitArray.concat(b,[sjcl.bitArray.partial(1,1)]);for(a=b.length+2;a&15;a++)b.push(0);b.push(Math.floor(this.a/
+	4294967296));for(b.push(this.a|0);b.length;)this.h(b.splice(0,16));this.reset();return c},i:[],b:[],u:function(){function a(a){return 0x100000000*(a-Math.floor(a))|0}var b=0,c=2,d;a:for(;64>b;c++){for(d=2;d*d<=c;d++)if(0===c%d)continue a;8>b&&(this.i[b]=a(Math.pow(c,0.5)));this.b[b]=a(Math.pow(c,1/3));b++}},h:function(a){var b,c,d=a.slice(0),e=this.e,f=this.b,g=e[0],h=e[1],k=e[2],l=e[3],n=e[4],m=e[5],p=e[6],s=e[7];for(a=0;64>a;a++)16>a?b=d[a]:(b=d[a+1&15],c=d[a+14&15],b=d[a&15]=(b>>>7^b>>>18^b>>>3^
+	b<<25^b<<14)+(c>>>17^c>>>19^c>>>10^c<<15^c<<13)+d[a&15]+d[a+9&15]|0),b=b+s+(n>>>6^n>>>11^n>>>25^n<<26^n<<21^n<<7)+(p^n&(m^p))+f[a],s=p,p=m,m=n,n=l+b|0,l=k,k=h,h=g,g=b+(h&k^l&(h^k))+(h>>>2^h>>>13^h>>>22^h<<30^h<<19^h<<10)|0;e[0]=e[0]+g|0;e[1]=e[1]+h|0;e[2]=e[2]+k|0;e[3]=e[3]+l|0;e[4]=e[4]+n|0;e[5]=e[5]+m|0;e[6]=e[6]+p|0;e[7]=e[7]+s|0}};
+	sjcl.mode.ccm={name:"ccm",encrypt:function(a,b,c,d,e){var f,g=b.slice(0),h=sjcl.bitArray,k=h.bitLength(c)/8,l=h.bitLength(g)/8;e=e||64;d=d||[];7>k&&q(new sjcl.exception.invalid("ccm: iv must be at least 7 bytes"));for(f=2;4>f&&l>>>8*f;f++);f<15-k&&(f=15-k);c=h.clamp(c,8*(15-f));b=sjcl.mode.ccm.O(a,b,c,d,e,f);g=sjcl.mode.ccm.t(a,g,c,b,e,f);return h.concat(g.data,g.tag)},decrypt:function(a,b,c,d,e){e=e||64;d=d||[];var f=sjcl.bitArray,g=f.bitLength(c)/8,h=f.bitLength(b),k=f.clamp(b,h-e),l=f.bitSlice(b,
+	h-e),h=(h-e)/8;7>g&&q(new sjcl.exception.invalid("ccm: iv must be at least 7 bytes"));for(b=2;4>b&&h>>>8*b;b++);b<15-g&&(b=15-g);c=f.clamp(c,8*(15-b));k=sjcl.mode.ccm.t(a,k,c,l,e,b);a=sjcl.mode.ccm.O(a,k.data,c,d,e,b);f.equal(k.tag,a)||q(new sjcl.exception.corrupt("ccm: tag doesn't match"));return k.data},O:function(a,b,c,d,e,f){var g=[],h=sjcl.bitArray,k=h.q;e/=8;(e%2||4>e||16<e)&&q(new sjcl.exception.invalid("ccm: invalid tag length"));(0xffffffff<d.length||0xffffffff<b.length)&&q(new sjcl.exception.bug("ccm: can't deal with 4GiB or more data"));
+	f=[h.partial(8,(d.length?64:0)|e-2<<2|f-1)];f=h.concat(f,c);f[3]|=h.bitLength(b)/8;f=a.encrypt(f);if(d.length){c=h.bitLength(d)/8;65279>=c?g=[h.partial(16,c)]:0xffffffff>=c&&(g=h.concat([h.partial(16,65534)],[c]));g=h.concat(g,d);for(d=0;d<g.length;d+=4)f=a.encrypt(k(f,g.slice(d,d+4).concat([0,0,0])))}for(d=0;d<b.length;d+=4)f=a.encrypt(k(f,b.slice(d,d+4).concat([0,0,0])));return h.clamp(f,8*e)},t:function(a,b,c,d,e,f){var g,h=sjcl.bitArray;g=h.q;var k=b.length,l=h.bitLength(b);c=h.concat([h.partial(8,
+	f-1)],c).concat([0,0,0]).slice(0,4);d=h.bitSlice(g(d,a.encrypt(c)),0,e);if(!k)return{tag:d,data:[]};for(g=0;g<k;g+=4)c[3]++,e=a.encrypt(c),b[g]^=e[0],b[g+1]^=e[1],b[g+2]^=e[2],b[g+3]^=e[3];return{tag:d,data:h.clamp(b,l)}}};
+	sjcl.mode.ocb2={name:"ocb2",encrypt:function(a,b,c,d,e,f){128!==sjcl.bitArray.bitLength(c)&&q(new sjcl.exception.invalid("ocb iv must be 128 bits"));var g,h=sjcl.mode.ocb2.K,k=sjcl.bitArray,l=k.q,n=[0,0,0,0];c=h(a.encrypt(c));var m,p=[];d=d||[];e=e||64;for(g=0;g+4<b.length;g+=4)m=b.slice(g,g+4),n=l(n,m),p=p.concat(l(c,a.encrypt(l(c,m)))),c=h(c);m=b.slice(g);b=k.bitLength(m);g=a.encrypt(l(c,[0,0,0,b]));m=k.clamp(l(m.concat([0,0,0]),g),b);n=l(n,l(m.concat([0,0,0]),g));n=a.encrypt(l(n,l(c,h(c))));d.length&&
+	(n=l(n,f?d:sjcl.mode.ocb2.pmac(a,d)));return p.concat(k.concat(m,k.clamp(n,e)))},decrypt:function(a,b,c,d,e,f){128!==sjcl.bitArray.bitLength(c)&&q(new sjcl.exception.invalid("ocb iv must be 128 bits"));e=e||64;var g=sjcl.mode.ocb2.K,h=sjcl.bitArray,k=h.q,l=[0,0,0,0],n=g(a.encrypt(c)),m,p,s=sjcl.bitArray.bitLength(b)-e,r=[];d=d||[];for(c=0;c+4<s/32;c+=4)m=k(n,a.decrypt(k(n,b.slice(c,c+4)))),l=k(l,m),r=r.concat(m),n=g(n);p=s-32*c;m=a.encrypt(k(n,[0,0,0,p]));m=k(m,h.clamp(b.slice(c),p).concat([0,0,0]));
+	l=k(l,m);l=a.encrypt(k(l,k(n,g(n))));d.length&&(l=k(l,f?d:sjcl.mode.ocb2.pmac(a,d)));h.equal(h.clamp(l,e),h.bitSlice(b,s))||q(new sjcl.exception.corrupt("ocb: tag doesn't match"));return r.concat(h.clamp(m,p))},pmac:function(a,b){var c,d=sjcl.mode.ocb2.K,e=sjcl.bitArray,f=e.q,g=[0,0,0,0],h=a.encrypt([0,0,0,0]),h=f(h,d(d(h)));for(c=0;c+4<b.length;c+=4)h=d(h),g=f(g,a.encrypt(f(h,b.slice(c,c+4))));c=b.slice(c);128>e.bitLength(c)&&(h=f(h,d(h)),c=e.concat(c,[-2147483648,0,0,0]));g=f(g,c);return a.encrypt(f(d(f(h,
+	d(h))),g))},K:function(a){return[a[0]<<1^a[1]>>>31,a[1]<<1^a[2]>>>31,a[2]<<1^a[3]>>>31,a[3]<<1^135*(a[0]>>>31)]}};
+	sjcl.mode.gcm={name:"gcm",encrypt:function(a,b,c,d,e){var f=b.slice(0);b=sjcl.bitArray;d=d||[];a=sjcl.mode.gcm.t(!0,a,f,d,c,e||128);return b.concat(a.data,a.tag)},decrypt:function(a,b,c,d,e){var f=b.slice(0),g=sjcl.bitArray,h=g.bitLength(f);e=e||128;d=d||[];e<=h?(b=g.bitSlice(f,h-e),f=g.bitSlice(f,0,h-e)):(b=f,f=[]);a=sjcl.mode.gcm.t(v,a,f,d,c,e);g.equal(a.tag,b)||q(new sjcl.exception.corrupt("gcm: tag doesn't match"));return a.data},ba:function(a,b){var c,d,e,f,g,h=sjcl.bitArray.q;e=[0,0,0,0];f=
+	b.slice(0);for(c=0;128>c;c++){(d=0!==(a[Math.floor(c/32)]&1<<31-c%32))&&(e=h(e,f));g=0!==(f[3]&1);for(d=3;0<d;d--)f[d]=f[d]>>>1|(f[d-1]&1)<<31;f[0]>>>=1;g&&(f[0]^=-0x1f000000)}return e},m:function(a,b,c){var d,e=c.length;b=b.slice(0);for(d=0;d<e;d+=4)b[0]^=0xffffffff&c[d],b[1]^=0xffffffff&c[d+1],b[2]^=0xffffffff&c[d+2],b[3]^=0xffffffff&c[d+3],b=sjcl.mode.gcm.ba(b,a);return b},t:function(a,b,c,d,e,f){var g,h,k,l,n,m,p,s,r=sjcl.bitArray;m=c.length;p=r.bitLength(c);s=r.bitLength(d);h=r.bitLength(e);g=
+	b.encrypt([0,0,0,0]);96===h?(e=e.slice(0),e=r.concat(e,[1])):(e=sjcl.mode.gcm.m(g,[0,0,0,0],e),e=sjcl.mode.gcm.m(g,e,[0,0,Math.floor(h/0x100000000),h&0xffffffff]));h=sjcl.mode.gcm.m(g,[0,0,0,0],d);n=e.slice(0);d=h.slice(0);a||(d=sjcl.mode.gcm.m(g,h,c));for(l=0;l<m;l+=4)n[3]++,k=b.encrypt(n),c[l]^=k[0],c[l+1]^=k[1],c[l+2]^=k[2],c[l+3]^=k[3];c=r.clamp(c,p);a&&(d=sjcl.mode.gcm.m(g,h,c));a=[Math.floor(s/0x100000000),s&0xffffffff,Math.floor(p/0x100000000),p&0xffffffff];d=sjcl.mode.gcm.m(g,d,a);k=b.encrypt(e);
+	d[0]^=k[0];d[1]^=k[1];d[2]^=k[2];d[3]^=k[3];return{tag:r.bitSlice(d,0,f),data:c}}};sjcl.misc.hmac=function(a,b){this.P=b=b||sjcl.hash.sha256;var c=[[],[]],d,e=b.prototype.blockSize/32;this.s=[new b,new b];a.length>e&&(a=b.hash(a));for(d=0;d<e;d++)c[0][d]=a[d]^909522486,c[1][d]=a[d]^1549556828;this.s[0].update(c[0]);this.s[1].update(c[1]);this.J=new b(this.s[0])};
+	sjcl.misc.hmac.prototype.encrypt=sjcl.misc.hmac.prototype.mac=function(a){this.T&&q(new sjcl.exception.invalid("encrypt on already updated hmac called!"));this.update(a);return this.digest(a)};sjcl.misc.hmac.prototype.reset=function(){this.J=new this.P(this.s[0]);this.T=v};sjcl.misc.hmac.prototype.update=function(a){this.T=!0;this.J.update(a)};sjcl.misc.hmac.prototype.digest=function(){var a=this.J.finalize(),a=(new this.P(this.s[1])).update(a).finalize();this.reset();return a};
+	sjcl.misc.pbkdf2=function(a,b,c,d,e){c=c||1E3;(0>d||0>c)&&q(sjcl.exception.invalid("invalid params to pbkdf2"));"string"===typeof a&&(a=sjcl.codec.utf8String.toBits(a));"string"===typeof b&&(b=sjcl.codec.utf8String.toBits(b));e=e||sjcl.misc.hmac;a=new e(a);var f,g,h,k,l=[],n=sjcl.bitArray;for(k=1;32*l.length<(d||1);k++){e=f=a.encrypt(n.concat(b,[k]));for(g=1;g<c;g++){f=a.encrypt(f);for(h=0;h<f.length;h++)e[h]^=f[h]}l=l.concat(e)}d&&(l=n.clamp(l,d));return l};
+	sjcl.prng=function(a){this.g=[new sjcl.hash.sha256];this.n=[0];this.I=0;this.A={};this.H=0;this.N={};this.Q=this.j=this.o=this.Z=0;this.b=[0,0,0,0,0,0,0,0];this.l=[0,0,0,0];this.F=u;this.G=a;this.w=v;this.D={progress:{},seeded:{}};this.r=this.Y=0;this.B=1;this.C=2;this.V=0x10000;this.L=[0,48,64,96,128,192,0x100,384,512,768,1024];this.W=3E4;this.U=80};
+	sjcl.prng.prototype={randomWords:function(a,b){var c=[],d;d=this.isReady(b);var e;d===this.r&&q(new sjcl.exception.notReady("generator isn't seeded"));if(d&this.C){d=!(d&this.B);e=[];var f=0,g;this.Q=e[0]=(new Date).valueOf()+this.W;for(g=0;16>g;g++)e.push(0x100000000*Math.random()|0);for(g=0;g<this.g.length&&!(e=e.concat(this.g[g].finalize()),f+=this.n[g],this.n[g]=0,!d&&this.I&1<<g);g++);this.I>=1<<this.g.length&&(this.g.push(new sjcl.hash.sha256),this.n.push(0));this.j-=f;f>this.o&&(this.o=f);this.I++;
+	this.b=sjcl.hash.sha256.hash(this.b.concat(e));this.F=new sjcl.cipher.aes(this.b);for(d=0;4>d&&!(this.l[d]=this.l[d]+1|0,this.l[d]);d++);}for(d=0;d<a;d+=4)0===(d+1)%this.V&&fa(this),e=B(this),c.push(e[0],e[1],e[2],e[3]);fa(this);return c.slice(0,a)},setDefaultParanoia:function(a,b){0===a&&"Setting paranoia=0 will ruin your security; use it only for testing"!==b&&q("Setting paranoia=0 will ruin your security; use it only for testing");this.G=a},addEntropy:function(a,b,c){c=c||"user";var d,e,f=(new Date).valueOf(),
+	g=this.A[c],h=this.isReady(),k=0;d=this.N[c];d===u&&(d=this.N[c]=this.Z++);g===u&&(g=this.A[c]=0);this.A[c]=(this.A[c]+1)%this.g.length;switch(typeof a){case "number":b===u&&(b=1);this.g[g].update([d,this.H++,1,b,f,1,a|0]);break;case "object":c=Object.prototype.toString.call(a);if("[object Uint32Array]"===c){e=[];for(c=0;c<a.length;c++)e.push(a[c]);a=e}else{"[object Array]"!==c&&(k=1);for(c=0;c<a.length&&!k;c++)"number"!==typeof a[c]&&(k=1)}if(!k){if(b===u)for(c=b=0;c<a.length;c++)for(e=a[c];0<e;)b++,
+	e>>>=1;this.g[g].update([d,this.H++,2,b,f,a.length].concat(a))}break;case "string":b===u&&(b=a.length);this.g[g].update([d,this.H++,3,b,f,a.length]);this.g[g].update(a);break;default:k=1}k&&q(new sjcl.exception.bug("random: addEntropy only supports number, array of numbers or string"));this.n[g]+=b;this.j+=b;h===this.r&&(this.isReady()!==this.r&&ga("seeded",Math.max(this.o,this.j)),ga("progress",this.getProgress()))},isReady:function(a){a=this.L[a!==u?a:this.G];return this.o&&this.o>=a?this.n[0]>
+	this.U&&(new Date).valueOf()>this.Q?this.C|this.B:this.B:this.j>=a?this.C|this.r:this.r},getProgress:function(a){a=this.L[a?a:this.G];return this.o>=a?1:this.j>a?1:this.j/a},startCollectors:function(){this.w||(this.d={loadTimeCollector:P(this,this.fa),mouseCollector:P(this,this.ga),keyboardCollector:P(this,this.da),accelerometerCollector:P(this,this.X)},window.addEventListener?(window.addEventListener("load",this.d.loadTimeCollector,v),window.addEventListener("mousemove",this.d.mouseCollector,v),
+	window.addEventListener("keypress",this.d.keyboardCollector,v),window.addEventListener("devicemotion",this.d.accelerometerCollector,v)):document.attachEvent?(document.attachEvent("onload",this.d.loadTimeCollector),document.attachEvent("onmousemove",this.d.mouseCollector),document.attachEvent("keypress",this.d.keyboardCollector)):q(new sjcl.exception.bug("can't attach event")),this.w=!0)},stopCollectors:function(){this.w&&(window.removeEventListener?(window.removeEventListener("load",this.d.loadTimeCollector,
+	v),window.removeEventListener("mousemove",this.d.mouseCollector,v),window.removeEventListener("keypress",this.d.keyboardCollector,v),window.removeEventListener("devicemotion",this.d.accelerometerCollector,v)):document.detachEvent&&(document.detachEvent("onload",this.d.loadTimeCollector),document.detachEvent("onmousemove",this.d.mouseCollector),document.detachEvent("keypress",this.d.keyboardCollector)),this.w=v)},addEventListener:function(a,b){this.D[a][this.Y++]=b},removeEventListener:function(a,
+	b){var c,d,e=this.D[a],f=[];for(d in e)e.hasOwnProperty(d)&&e[d]===b&&f.push(d);for(c=0;c<f.length;c++)d=f[c],delete e[d]},da:function(){Q(1)},ga:function(a){sjcl.random.addEntropy([a.x||a.clientX||a.offsetX||0,a.y||a.clientY||a.offsetY||0],2,"mouse");Q(0)},fa:function(){Q(2)},X:function(a){a=a.accelerationIncludingGravity.x||a.accelerationIncludingGravity.y||a.accelerationIncludingGravity.z;if(window.orientation){var b=window.orientation;"number"===typeof b&&sjcl.random.addEntropy(b,1,"accelerometer")}a&&
+	sjcl.random.addEntropy(a,2,"accelerometer");Q(0)}};function ga(a,b){var c,d=sjcl.random.D[a],e=[];for(c in d)d.hasOwnProperty(c)&&e.push(d[c]);for(c=0;c<e.length;c++)e[c](b)}function Q(a){window&&window.performance&&"function"===typeof window.performance.now?sjcl.random.addEntropy(window.performance.now(),a,"loadtime"):sjcl.random.addEntropy((new Date).valueOf(),a,"loadtime")}function fa(a){a.b=B(a).concat(B(a));a.F=new sjcl.cipher.aes(a.b)}
+	function B(a){for(var b=0;4>b&&!(a.l[b]=a.l[b]+1|0,a.l[b]);b++);return a.F.encrypt(a.l)}function P(a,b){return function(){b.apply(a,arguments)}}sjcl.random=new sjcl.prng(6);
+	a:try{var R,S,X,Y;if(Y="undefined"!==typeof module){var Z;if(Z=module.exports){var ha;try{ha=__webpack_require__(44)}catch(ma){ha=null}Z=(S=ha)&&S.randomBytes}Y=Z}if(Y)R=S.randomBytes(128),R=new Uint32Array((new Uint8Array(R)).buffer),sjcl.random.addEntropy(R,1024,"crypto['randomBytes']");else if(window&&Uint32Array){X=new Uint32Array(32);if(window.crypto&&window.crypto.getRandomValues)window.crypto.getRandomValues(X);else if(window.msCrypto&&window.msCrypto.getRandomValues)window.msCrypto.getRandomValues(X);
+	else break a;sjcl.random.addEntropy(X,1024,"crypto['getRandomValues']")}}catch(pa){"undefined"!==typeof window&&window.console&&(console.log("There was an error collecting entropy from the browser:"),console.log(pa))}
+	sjcl.json={defaults:{v:1,iter:1E3,ks:128,ts:64,mode:"ccm",adata:"",cipher:"aes"},aa:function(a,b,c,d){c=c||{};d=d||{};var e=sjcl.json,f=e.k({iv:sjcl.random.randomWords(4,0)},e.defaults),g;e.k(f,c);c=f.adata;"string"===typeof f.salt&&(f.salt=sjcl.codec.base64.toBits(f.salt));"string"===typeof f.iv&&(f.iv=sjcl.codec.base64.toBits(f.iv));(!sjcl.mode[f.mode]||!sjcl.cipher[f.cipher]||"string"===typeof a&&100>=f.iter||64!==f.ts&&96!==f.ts&&128!==f.ts||128!==f.ks&&192!==f.ks&&0x100!==f.ks||2>f.iv.length||
+	4<f.iv.length)&&q(new sjcl.exception.invalid("json encrypt: invalid parameters"));"string"===typeof a?(g=sjcl.misc.cachedPbkdf2(a,f),a=g.key.slice(0,f.ks/32),f.salt=g.salt):sjcl.ecc&&a instanceof sjcl.ecc.elGamal.publicKey&&(g=a.kem(),f.kemtag=g.tag,a=g.key.slice(0,f.ks/32));"string"===typeof b&&(b=sjcl.codec.utf8String.toBits(b));"string"===typeof c&&(c=sjcl.codec.utf8String.toBits(c));g=new sjcl.cipher[f.cipher](a);e.k(d,f);d.key=a;f.ct=sjcl.mode[f.mode].encrypt(g,b,f.iv,c,f.ts);return f},encrypt:function(a,
+	b,c,d){var e=sjcl.json,f=e.aa.apply(e,arguments);return e.encode(f)},$:function(a,b,c,d){c=c||{};d=d||{};var e=sjcl.json;b=e.k(e.k(e.k({},e.defaults),b),c,!0);var f;c=b.adata;"string"===typeof b.salt&&(b.salt=sjcl.codec.base64.toBits(b.salt));"string"===typeof b.iv&&(b.iv=sjcl.codec.base64.toBits(b.iv));(!sjcl.mode[b.mode]||!sjcl.cipher[b.cipher]||"string"===typeof a&&100>=b.iter||64!==b.ts&&96!==b.ts&&128!==b.ts||128!==b.ks&&192!==b.ks&&0x100!==b.ks||!b.iv||2>b.iv.length||4<b.iv.length)&&q(new sjcl.exception.invalid("json decrypt: invalid parameters"));
+	"string"===typeof a?(f=sjcl.misc.cachedPbkdf2(a,b),a=f.key.slice(0,b.ks/32),b.salt=f.salt):sjcl.ecc&&a instanceof sjcl.ecc.elGamal.secretKey&&(a=a.unkem(sjcl.codec.base64.toBits(b.kemtag)).slice(0,b.ks/32));"string"===typeof c&&(c=sjcl.codec.utf8String.toBits(c));f=new sjcl.cipher[b.cipher](a);c=sjcl.mode[b.mode].decrypt(f,b.ct,b.iv,c,b.ts);e.k(d,b);d.key=a;return sjcl.codec.utf8String.fromBits(c)},decrypt:function(a,b,c,d){var e=sjcl.json;return e.$(a,e.decode(b),c,d)},encode:function(a){var b,c=
+	"{",d="";for(b in a)if(a.hasOwnProperty(b))switch(b.match(/^[a-z0-9]+$/i)||q(new sjcl.exception.invalid("json encode: invalid property name")),c+=d+'"'+b+'":',d=",",typeof a[b]){case "number":case "boolean":c+=a[b];break;case "string":c+='"'+escape(a[b])+'"';break;case "object":c+='"'+sjcl.codec.base64.fromBits(a[b],0)+'"';break;default:q(new sjcl.exception.bug("json encode: unsupported type"))}return c+"}"},decode:function(a){a=a.replace(/\s/g,"");a.match(/^\{.*\}$/)||q(new sjcl.exception.invalid("json decode: this isn't json!"));
+	a=a.replace(/^\{|\}$/g,"").split(/,/);var b={},c,d;for(c=0;c<a.length;c++)(d=a[c].match(/^(?:(["']?)([a-z][a-z0-9]*)\1):(?:(\d+)|"([a-z0-9+\/%*_.@=\-]*)")$/i))||q(new sjcl.exception.invalid("json decode: this isn't json!")),b[d[2]]=d[3]?parseInt(d[3],10):d[2].match(/^(ct|salt|iv)$/)?sjcl.codec.base64.toBits(d[4]):unescape(d[4]);return b},k:function(a,b,c){a===u&&(a={});if(b===u)return a;for(var d in b)b.hasOwnProperty(d)&&(c&&(a[d]!==u&&a[d]!==b[d])&&q(new sjcl.exception.invalid("required parameter overridden")),
+	a[d]=b[d]);return a},ja:function(a,b){var c={},d;for(d in a)a.hasOwnProperty(d)&&a[d]!==b[d]&&(c[d]=a[d]);return c},ia:function(a,b){var c={},d;for(d=0;d<b.length;d++)a[b[d]]!==u&&(c[b[d]]=a[b[d]]);return c}};sjcl.encrypt=sjcl.json.encrypt;sjcl.decrypt=sjcl.json.decrypt;sjcl.misc.ha={};
+	sjcl.misc.cachedPbkdf2=function(a,b){var c=sjcl.misc.ha,d;b=b||{};d=b.iter||1E3;c=c[a]=c[a]||{};d=c[d]=c[d]||{firstSalt:b.salt&&b.salt.length?b.salt.slice(0):sjcl.random.randomWords(2,0)};c=b.salt===u?d.firstSalt:b.salt;d[c]=d[c]||sjcl.misc.pbkdf2(a,c,b.iter);return{key:d[c].slice(0),salt:c.slice(0)}};sjcl.bn=function(a){this.initWith(a)};
+	sjcl.bn.prototype={radix:24,maxMul:8,f:sjcl.bn,copy:function(){return new this.f(this)},initWith:function(a){var b=0,c;switch(typeof a){case "object":this.limbs=a.limbs.slice(0);break;case "number":this.limbs=[a];this.normalize();break;case "string":a=a.replace(/^0x/,"");this.limbs=[];c=this.radix/4;for(b=0;b<a.length;b+=c)this.limbs.push(parseInt(a.substring(Math.max(a.length-b-c,0),a.length-b),16));break;default:this.limbs=[0]}return this},equals:function(a){"number"===typeof a&&(a=new this.f(a));
+	var b=0,c;this.fullReduce();a.fullReduce();for(c=0;c<this.limbs.length||c<a.limbs.length;c++)b|=this.getLimb(c)^a.getLimb(c);return 0===b},getLimb:function(a){return a>=this.limbs.length?0:this.limbs[a]},greaterEquals:function(a){"number"===typeof a&&(a=new this.f(a));var b=0,c=0,d,e,f;for(d=Math.max(this.limbs.length,a.limbs.length)-1;0<=d;d--)e=this.getLimb(d),f=a.getLimb(d),c|=f-e&~b,b|=e-f&~c;return(c|~b)>>>31},toString:function(){this.fullReduce();var a="",b,c,d=this.limbs;for(b=0;b<this.limbs.length;b++){for(c=
+	d[b].toString(16);b<this.limbs.length-1&&6>c.length;)c="0"+c;a=c+a}return"0x"+a},addM:function(a){"object"!==typeof a&&(a=new this.f(a));var b=this.limbs,c=a.limbs;for(a=b.length;a<c.length;a++)b[a]=0;for(a=0;a<c.length;a++)b[a]+=c[a];return this},doubleM:function(){var a,b=0,c,d=this.radix,e=this.radixMask,f=this.limbs;for(a=0;a<f.length;a++)c=f[a],c=c+c+b,f[a]=c&e,b=c>>d;b&&f.push(b);return this},halveM:function(){var a,b=0,c,d=this.radix,e=this.limbs;for(a=e.length-1;0<=a;a--)c=e[a],e[a]=c+b>>
+	1,b=(c&1)<<d;e[e.length-1]||e.pop();return this},subM:function(a){"object"!==typeof a&&(a=new this.f(a));var b=this.limbs,c=a.limbs;for(a=b.length;a<c.length;a++)b[a]=0;for(a=0;a<c.length;a++)b[a]-=c[a];return this},mod:function(a){var b=!this.greaterEquals(new sjcl.bn(0));a=(new sjcl.bn(a)).normalize();var c=(new sjcl.bn(this)).normalize(),d=0;for(b&&(c=(new sjcl.bn(0)).subM(c).normalize());c.greaterEquals(a);d++)a.doubleM();for(b&&(c=a.sub(c).normalize());0<d;d--)a.halveM(),c.greaterEquals(a)&&
+	c.subM(a).normalize();return c.trim()},inverseMod:function(a){var b=new sjcl.bn(1),c=new sjcl.bn(0),d=new sjcl.bn(this),e=new sjcl.bn(a),f,g=1;a.limbs[0]&1||q(new sjcl.exception.invalid("inverseMod: p must be odd"));do{d.limbs[0]&1&&(d.greaterEquals(e)||(f=d,d=e,e=f,f=b,b=c,c=f),d.subM(e),d.normalize(),b.greaterEquals(c)||b.addM(a),b.subM(c));d.halveM();b.limbs[0]&1&&b.addM(a);b.normalize();b.halveM();for(f=g=0;f<d.limbs.length;f++)g|=d.limbs[f]}while(g);e.equals(1)||q(new sjcl.exception.invalid("inverseMod: p and x must be relatively prime"));
+	return c},add:function(a){return this.copy().addM(a)},sub:function(a){return this.copy().subM(a)},mul:function(a){"number"===typeof a&&(a=new this.f(a));var b,c=this.limbs,d=a.limbs,e=c.length,f=d.length,g=new this.f,h=g.limbs,k,l=this.maxMul;for(b=0;b<this.limbs.length+a.limbs.length+1;b++)h[b]=0;for(b=0;b<e;b++){k=c[b];for(a=0;a<f;a++)h[b+a]+=k*d[a];--l||(l=this.maxMul,g.cnormalize())}return g.cnormalize().reduce()},square:function(){return this.mul(this)},power:function(a){"number"===typeof a?
+	a=[a]:a.limbs!==u&&(a=a.normalize().limbs);var b,c,d=new this.f(1),e=this;for(b=0;b<a.length;b++)for(c=0;c<this.radix;c++)a[b]&1<<c&&(d=d.mul(e)),e=e.square();return d},mulmod:function(a,b){return this.mod(b).mul(a.mod(b)).mod(b)},powermod:function(a,b){for(var c=new sjcl.bn(1),d=new sjcl.bn(this),e=new sjcl.bn(a);;){e.limbs[0]&1&&(c=c.mulmod(d,b));e.halveM();if(e.equals(0))break;d=d.mulmod(d,b)}return c.normalize().reduce()},trim:function(){var a=this.limbs,b;do b=a.pop();while(a.length&&0===b);
+	a.push(b);return this},reduce:function(){return this},fullReduce:function(){return this.normalize()},normalize:function(){var a=0,b,c=this.ipv,d,e=this.limbs,f=e.length,g=this.radixMask;for(b=0;b<f||0!==a&&-1!==a;b++)a=(e[b]||0)+a,d=e[b]=a&g,a=(a-d)*c;-1===a&&(e[b-1]-=this.placeVal);return this},cnormalize:function(){var a=0,b,c=this.ipv,d,e=this.limbs,f=e.length,g=this.radixMask;for(b=0;b<f-1;b++)a=e[b]+a,d=e[b]=a&g,a=(a-d)*c;e[b]+=a;return this},toBits:function(a){this.fullReduce();a=a||this.exponent||
+	this.bitLength();var b=Math.floor((a-1)/24),c=sjcl.bitArray,d=[c.partial((a+7&-8)%this.radix||this.radix,this.getLimb(b))];for(b--;0<=b;b--)d=c.concat(d,[c.partial(Math.min(this.radix,a),this.getLimb(b))]),a-=this.radix;return d},bitLength:function(){this.fullReduce();for(var a=this.radix*(this.limbs.length-1),b=this.limbs[this.limbs.length-1];b;b>>>=1)a++;return a+7&-8}};
+	sjcl.bn.fromBits=function(a){var b=new this,c=[],d=sjcl.bitArray,e=this.prototype,f=Math.min(this.bitLength||0x100000000,d.bitLength(a)),g=f%e.radix||e.radix;for(c[0]=d.extract(a,0,g);g<f;g+=e.radix)c.unshift(d.extract(a,g,e.radix));b.limbs=c;return b};sjcl.bn.prototype.ipv=1/(sjcl.bn.prototype.placeVal=Math.pow(2,sjcl.bn.prototype.radix));sjcl.bn.prototype.radixMask=(1<<sjcl.bn.prototype.radix)-1;
+	sjcl.bn.pseudoMersennePrime=function(a,b){function c(a){this.initWith(a)}var d=c.prototype=new sjcl.bn,e,f;e=d.modOffset=Math.ceil(f=a/d.radix);d.exponent=a;d.offset=[];d.factor=[];d.minOffset=e;d.fullMask=0;d.fullOffset=[];d.fullFactor=[];d.modulus=c.modulus=new sjcl.bn(Math.pow(2,a));d.fullMask=0|-Math.pow(2,a%d.radix);for(e=0;e<b.length;e++)d.offset[e]=Math.floor(b[e][0]/d.radix-f),d.fullOffset[e]=Math.ceil(b[e][0]/d.radix-f),d.factor[e]=b[e][1]*Math.pow(0.5,a-b[e][0]+d.offset[e]*d.radix),d.fullFactor[e]=
+	b[e][1]*Math.pow(0.5,a-b[e][0]+d.fullOffset[e]*d.radix),d.modulus.addM(new sjcl.bn(Math.pow(2,b[e][0])*b[e][1])),d.minOffset=Math.min(d.minOffset,-d.offset[e]);d.f=c;d.modulus.cnormalize();d.reduce=function(){var a,b,c,d=this.modOffset,e=this.limbs,f=this.offset,p=this.offset.length,s=this.factor,r;for(a=this.minOffset;e.length>d;){c=e.pop();r=e.length;for(b=0;b<p;b++)e[r+f[b]]-=s[b]*c;a--;a||(e.push(0),this.cnormalize(),a=this.minOffset)}this.cnormalize();return this};d.S=-1===d.fullMask?d.reduce:
+	function(){var a=this.limbs,b=a.length-1,c,d;this.reduce();if(b===this.modOffset-1){d=a[b]&this.fullMask;a[b]-=d;for(c=0;c<this.fullOffset.length;c++)a[b+this.fullOffset[c]]-=this.fullFactor[c]*d;this.normalize()}};d.fullReduce=function(){var a,b;this.S();this.addM(this.modulus);this.addM(this.modulus);this.normalize();this.S();for(b=this.limbs.length;b<this.modOffset;b++)this.limbs[b]=0;a=this.greaterEquals(this.modulus);for(b=0;b<this.limbs.length;b++)this.limbs[b]-=this.modulus.limbs[b]*a;this.cnormalize();
+	return this};d.inverse=function(){return this.power(this.modulus.sub(2))};c.fromBits=sjcl.bn.fromBits;return c};var $=sjcl.bn.pseudoMersennePrime;
+	sjcl.bn.prime={p127:$(127,[[0,-1]]),p25519:$(255,[[0,-19]]),p192k:$(192,[[32,-1],[12,-1],[8,-1],[7,-1],[6,-1],[3,-1],[0,-1]]),p224k:$(224,[[32,-1],[12,-1],[11,-1],[9,-1],[7,-1],[4,-1],[1,-1],[0,-1]]),p256k:$(0x100,[[32,-1],[9,-1],[8,-1],[7,-1],[6,-1],[4,-1],[0,-1]]),p192:$(192,[[0,-1],[64,-1]]),p224:$(224,[[0,1],[96,-1]]),p256:$(0x100,[[0,-1],[96,1],[192,1],[224,-1]]),p384:$(384,[[0,-1],[32,1],[96,-1],[128,-1]]),p521:$(521,[[0,-1]])};
+	sjcl.bn.random=function(a,b){"object"!==typeof a&&(a=new sjcl.bn(a));for(var c,d,e=a.limbs.length,f=a.limbs[e-1]+1,g=new sjcl.bn;;){do c=sjcl.random.randomWords(e,b),0>c[e-1]&&(c[e-1]+=0x100000000);while(Math.floor(c[e-1]/f)===Math.floor(0x100000000/f));c[e-1]%=f;for(d=0;d<e-1;d++)c[d]&=a.radixMask;g.limbs=c;if(!g.greaterEquals(a))return g}};
+	sjcl.codec.bytes={fromBits:function(a){var b=[],c=sjcl.bitArray.bitLength(a),d,e;for(d=0;d<c/8;d++)0===(d&3)&&(e=a[d/4]),b.push(e>>>24),e<<=8;return b},toBits:function(a){var b=[],c,d=0;for(c=0;c<a.length;c++)d=d<<8|a[c],3===(c&3)&&(b.push(d),d=0);c&3&&b.push(sjcl.bitArray.partial(8*(c&3),d));return b}};sjcl.hash.sha512=function(a){this.b[0]||this.u();a?(this.e=a.e.slice(0),this.c=a.c.slice(0),this.a=a.a):this.reset()};sjcl.hash.sha512.hash=function(a){return(new sjcl.hash.sha512).update(a).finalize()};
+	sjcl.hash.sha512.prototype={blockSize:1024,reset:function(){this.e=this.i.slice(0);this.c=[];this.a=0;return this},update:function(a){"string"===typeof a&&(a=sjcl.codec.utf8String.toBits(a));var b,c=this.c=sjcl.bitArray.concat(this.c,a);b=this.a;a=this.a=b+sjcl.bitArray.bitLength(a);for(b=1024+b&-1024;b<=a;b+=1024)this.h(c.splice(0,32));return this},finalize:function(){var a,b=this.c,c=this.e,b=sjcl.bitArray.concat(b,[sjcl.bitArray.partial(1,1)]);for(a=b.length+4;a&31;a++)b.push(0);b.push(0);b.push(0);
+	b.push(Math.floor(this.a/0x100000000));for(b.push(this.a|0);b.length;)this.h(b.splice(0,32));this.reset();return c},i:[],ca:[12372232,13281083,9762859,1914609,15106769,4090911,4308331,8266105],b:[],ea:[2666018,15689165,5061423,9034684,4764984,380953,1658779,7176472,197186,7368638,14987916,16757986,8096111,1480369,13046325,6891156,15813330,5187043,9229749,11312229,2818677,10937475,4324308,1135541,6741931,11809296,16458047,15666916,11046850,698149,229999,945776,13774844,2541862,12856045,9810911,11494366,
+	7844520,15576806,8533307,15795044,4337665,16291729,5553712,15684120,6662416,7413802,12308920,13816008,4303699,9366425,10176680,13195875,4295371,6546291,11712675,15708924,1519456,15772530,6568428,6495784,8568297,13007125,7492395,2515356,12632583,14740254,7262584,1535930,13146278,16321966,1853211,294276,13051027,13221564,1051980,4080310,6651434,14088940,4675607],u:function(){function a(a){return 0x100000000*(a-Math.floor(a))|0}function b(a){return 0x10000000000*(a-Math.floor(a))&255}var c=0,d=2,e;a:for(;80>
+	c;d++){for(e=2;e*e<=d;e++)if(0===d%e)continue a;8>c&&(this.i[2*c]=a(Math.pow(d,0.5)),this.i[2*c+1]=b(Math.pow(d,0.5))<<24|this.ca[c]);this.b[2*c]=a(Math.pow(d,1/3));this.b[2*c+1]=b(Math.pow(d,1/3))<<24|this.ea[c];c++}},h:function(a){var b,c,d=a.slice(0),e=this.e,f=this.b,g=e[0],h=e[1],k=e[2],l=e[3],n=e[4],m=e[5],p=e[6],s=e[7],r=e[8],D=e[9],F=e[10],E=e[11],ia=e[12],T=e[13],ja=e[14],U=e[15],y=g,w=h,I=k,G=l,J=n,H=m,ba=p,K=s,z=r,x=D,V=F,L=E,W=ia,M=T,ca=ja,N=U;for(a=0;80>a;a++){if(16>a)b=d[2*a],c=d[2*
+	a+1];else{c=d[2*(a-15)];var t=d[2*(a-15)+1];b=(t<<31|c>>>1)^(t<<24|c>>>8)^c>>>7;var A=(c<<31|t>>>1)^(c<<24|t>>>8)^(c<<25|t>>>7);c=d[2*(a-2)];var C=d[2*(a-2)+1],t=(C<<13|c>>>19)^(c<<3|C>>>29)^c>>>6,C=(c<<13|C>>>19)^(C<<3|c>>>29)^(c<<26|C>>>6),da=d[2*(a-7)],ea=d[2*(a-16)],O=d[2*(a-16)+1];c=A+d[2*(a-7)+1];b=b+da+(c>>>0<A>>>0?1:0);c+=C;b+=t+(c>>>0<C>>>0?1:0);c+=O;b+=ea+(c>>>0<O>>>0?1:0)}d[2*a]=b|=0;d[2*a+1]=c|=0;var da=z&V^~z&W,ka=x&L^~x&M,C=y&I^y&J^I&J,na=w&G^w&H^G&H,ea=(w<<4|y>>>28)^(y<<30|w>>>2)^(y<<
+	25|w>>>7),O=(y<<4|w>>>28)^(w<<30|y>>>2)^(w<<25|y>>>7),oa=f[2*a],la=f[2*a+1],t=N+((z<<18|x>>>14)^(z<<14|x>>>18)^(x<<23|z>>>9)),A=ca+((x<<18|z>>>14)^(x<<14|z>>>18)^(z<<23|x>>>9))+(t>>>0<N>>>0?1:0),t=t+ka,A=A+(da+(t>>>0<ka>>>0?1:0)),t=t+la,A=A+(oa+(t>>>0<la>>>0?1:0)),t=t+c,A=A+(b+(t>>>0<c>>>0?1:0));c=O+na;b=ea+C+(c>>>0<O>>>0?1:0);ca=W;N=M;W=V;M=L;V=z;L=x;x=K+t|0;z=ba+A+(x>>>0<K>>>0?1:0)|0;ba=J;K=H;J=I;H=G;I=y;G=w;w=t+c|0;y=A+b+(w>>>0<t>>>0?1:0)|0}h=e[1]=h+w|0;e[0]=g+y+(h>>>0<w>>>0?1:0)|0;l=e[3]=l+G|
+	0;e[2]=k+I+(l>>>0<G>>>0?1:0)|0;m=e[5]=m+H|0;e[4]=n+J+(m>>>0<H>>>0?1:0)|0;s=e[7]=s+K|0;e[6]=p+ba+(s>>>0<K>>>0?1:0)|0;D=e[9]=D+x|0;e[8]=r+z+(D>>>0<x>>>0?1:0)|0;E=e[11]=E+L|0;e[10]=F+V+(E>>>0<L>>>0?1:0)|0;T=e[13]=T+M|0;e[12]=ia+W+(T>>>0<M>>>0?1:0)|0;U=e[15]=U+N|0;e[14]=ja+ca+(U>>>0<N>>>0?1:0)|0}};sjcl.hash.sha1=function(a){a?(this.e=a.e.slice(0),this.c=a.c.slice(0),this.a=a.a):this.reset()};sjcl.hash.sha1.hash=function(a){return(new sjcl.hash.sha1).update(a).finalize()};
+	sjcl.hash.sha1.prototype={blockSize:512,reset:function(){this.e=this.i.slice(0);this.c=[];this.a=0;return this},update:function(a){"string"===typeof a&&(a=sjcl.codec.utf8String.toBits(a));var b,c=this.c=sjcl.bitArray.concat(this.c,a);b=this.a;a=this.a=b+sjcl.bitArray.bitLength(a);for(b=this.blockSize+b&-this.blockSize;b<=a;b+=this.blockSize)this.h(c.splice(0,16));return this},finalize:function(){var a,b=this.c,c=this.e,b=sjcl.bitArray.concat(b,[sjcl.bitArray.partial(1,1)]);for(a=b.length+2;a&15;a++)b.push(0);
+	b.push(Math.floor(this.a/0x100000000));for(b.push(this.a|0);b.length;)this.h(b.splice(0,16));this.reset();return c},i:[1732584193,4023233417,2562383102,271733878,3285377520],b:[1518500249,1859775393,2400959708,3395469782],h:function(a){var b,c,d,e,f,g,h=a.slice(0),k=this.e;c=k[0];d=k[1];e=k[2];f=k[3];g=k[4];for(a=0;79>=a;a++)16<=a&&(h[a]=(h[a-3]^h[a-8]^h[a-14]^h[a-16])<<1|(h[a-3]^h[a-8]^h[a-14]^h[a-16])>>>31),b=19>=a?d&e|~d&f:39>=a?d^e^f:59>=a?d&e|d&f|e&f:79>=a?d^e^f:u,b=(c<<5|c>>>27)+b+g+h[a]+this.b[Math.floor(a/
+	20)]|0,g=f,f=e,e=d<<30|d>>>2,d=c,c=b;k[0]=k[0]+c|0;k[1]=k[1]+d|0;k[2]=k[2]+e|0;k[3]=k[3]+f|0;k[4]=k[4]+g|0}};
 
 
 /***/ },
-/* 33 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/** @fileOverview Javascript cryptography implementation.
-	 *
-	 * Crush to remove comments, shorten variable names and
-	 * generally reduce transmission size.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	"use strict";
-	/*jslint indent: 2, bitwise: false, nomen: false, plusplus: false, white: false, regexp: false */
-	/*global document, window, escape, unescape */
-
-	/** @namespace The Stanford Javascript Crypto Library, top-level namespace. */
-	var sjcl = {
-	  /** @namespace Symmetric ciphers. */
-	  cipher: {},
-
-	  /** @namespace Hash functions.  Right now only SHA256 is implemented. */
-	  hash: {},
-
-	  /** @namespace Key exchange functions.  Right now only SRP is implemented. */
-	  keyexchange: {},
-	  
-	  /** @namespace Block cipher modes of operation. */
-	  mode: {},
-
-	  /** @namespace Miscellaneous.  HMAC and PBKDF2. */
-	  misc: {},
-	  
-	  /**
-	   * @namespace Bit array encoders and decoders.
-	   *
-	   * @description
-	   * The members of this namespace are functions which translate between
-	   * SJCL's bitArrays and other objects (usually strings).  Because it
-	   * isn't always clear which direction is encoding and which is decoding,
-	   * the method names are "fromBits" and "toBits".
-	   */
-	  codec: {},
-	  
-	  /** @namespace Exceptions. */
-	  exception: {
-	    /** @constructor Ciphertext is corrupt. */
-	    corrupt: function(message) {
-	      this.toString = function() { return "CORRUPT: "+this.message; };
-	      this.message = message;
-	    },
-	    
-	    /** @constructor Invalid parameter. */
-	    invalid: function(message) {
-	      this.toString = function() { return "INVALID: "+this.message; };
-	      this.message = message;
-	    },
-	    
-	    /** @constructor Bug or missing feature in SJCL. @constructor */
-	    bug: function(message) {
-	      this.toString = function() { return "BUG: "+this.message; };
-	      this.message = message;
-	    },
-
-	    /** @constructor Something isn't ready. */
-	    notReady: function(message) {
-	      this.toString = function() { return "NOT READY: "+this.message; };
-	      this.message = message;
-	    }
-	  }
-	};
-
-	if(typeof module != 'undefined' && module.exports){
-	  module.exports = sjcl;
-	}
-
-	/** @fileOverview Low-level AES implementation.
-	 *
-	 * This file contains a low-level implementation of AES, optimized for
-	 * size and for efficiency on several browsers.  It is based on
-	 * OpenSSL's aes_core.c, a public-domain implementation by Vincent
-	 * Rijmen, Antoon Bosselaers and Paulo Barreto.
-	 *
-	 * An older version of this implementation is available in the public
-	 * domain, but this one is (c) Emily Stark, Mike Hamburg, Dan Boneh,
-	 * Stanford University 2008-2010 and BSD-licensed for liability
-	 * reasons.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/**
-	 * Schedule out an AES key for both encryption and decryption.  This
-	 * is a low-level class.  Use a cipher mode to do bulk encryption.
-	 *
-	 * @constructor
-	 * @param {Array} key The key as an array of 4, 6 or 8 words.
-	 *
-	 * @class Advanced Encryption Standard (low-level interface)
-	 */
-	sjcl.cipher.aes = function (key) {
-	  if (!this._tables[0][0][0]) {
-	    this._precompute();
-	  }
-	  
-	  var i, j, tmp,
-	    encKey, decKey,
-	    sbox = this._tables[0][4], decTable = this._tables[1],
-	    keyLen = key.length, rcon = 1;
-	  
-	  if (keyLen !== 4 && keyLen !== 6 && keyLen !== 8) {
-	    throw new sjcl.exception.invalid("invalid aes key size");
-	  }
-	  
-	  this._key = [encKey = key.slice(0), decKey = []];
-	  
-	  // schedule encryption keys
-	  for (i = keyLen; i < 4 * keyLen + 28; i++) {
-	    tmp = encKey[i-1];
-	    
-	    // apply sbox
-	    if (i%keyLen === 0 || (keyLen === 8 && i%keyLen === 4)) {
-	      tmp = sbox[tmp>>>24]<<24 ^ sbox[tmp>>16&255]<<16 ^ sbox[tmp>>8&255]<<8 ^ sbox[tmp&255];
-	      
-	      // shift rows and add rcon
-	      if (i%keyLen === 0) {
-	        tmp = tmp<<8 ^ tmp>>>24 ^ rcon<<24;
-	        rcon = rcon<<1 ^ (rcon>>7)*283;
-	      }
-	    }
-	    
-	    encKey[i] = encKey[i-keyLen] ^ tmp;
-	  }
-	  
-	  // schedule decryption keys
-	  for (j = 0; i; j++, i--) {
-	    tmp = encKey[j&3 ? i : i - 4];
-	    if (i<=4 || j<4) {
-	      decKey[j] = tmp;
-	    } else {
-	      decKey[j] = decTable[0][sbox[tmp>>>24      ]] ^
-	                  decTable[1][sbox[tmp>>16  & 255]] ^
-	                  decTable[2][sbox[tmp>>8   & 255]] ^
-	                  decTable[3][sbox[tmp      & 255]];
-	    }
-	  }
-	};
-
-	sjcl.cipher.aes.prototype = {
-	  // public
-	  /* Something like this might appear here eventually
-	  name: "AES",
-	  blockSize: 4,
-	  keySizes: [4,6,8],
-	  */
-	  
-	  /**
-	   * Encrypt an array of 4 big-endian words.
-	   * @param {Array} data The plaintext.
-	   * @return {Array} The ciphertext.
-	   */
-	  encrypt:function (data) { return this._crypt(data,0); },
-	  
-	  /**
-	   * Decrypt an array of 4 big-endian words.
-	   * @param {Array} data The ciphertext.
-	   * @return {Array} The plaintext.
-	   */
-	  decrypt:function (data) { return this._crypt(data,1); },
-	  
-	  /**
-	   * The expanded S-box and inverse S-box tables.  These will be computed
-	   * on the client so that we don't have to send them down the wire.
-	   *
-	   * There are two tables, _tables[0] is for encryption and
-	   * _tables[1] is for decryption.
-	   *
-	   * The first 4 sub-tables are the expanded S-box with MixColumns.  The
-	   * last (_tables[01][4]) is the S-box itself.
-	   *
-	   * @private
-	   */
-	  _tables: [[[],[],[],[],[]],[[],[],[],[],[]]],
-
-	  /**
-	   * Expand the S-box tables.
-	   *
-	   * @private
-	   */
-	  _precompute: function () {
-	   var encTable = this._tables[0], decTable = this._tables[1],
-	       sbox = encTable[4], sboxInv = decTable[4],
-	       i, x, xInv, d=[], th=[], x2, x4, x8, s, tEnc, tDec;
-
-	    // Compute double and third tables
-	   for (i = 0; i < 256; i++) {
-	     th[( d[i] = i<<1 ^ (i>>7)*283 )^i]=i;
-	   }
-	   
-	   for (x = xInv = 0; !sbox[x]; x ^= x2 || 1, xInv = th[xInv] || 1) {
-	     // Compute sbox
-	     s = xInv ^ xInv<<1 ^ xInv<<2 ^ xInv<<3 ^ xInv<<4;
-	     s = s>>8 ^ s&255 ^ 99;
-	     sbox[x] = s;
-	     sboxInv[s] = x;
-	     
-	     // Compute MixColumns
-	     x8 = d[x4 = d[x2 = d[x]]];
-	     tDec = x8*0x1010101 ^ x4*0x10001 ^ x2*0x101 ^ x*0x1010100;
-	     tEnc = d[s]*0x101 ^ s*0x1010100;
-	     
-	     for (i = 0; i < 4; i++) {
-	       encTable[i][x] = tEnc = tEnc<<24 ^ tEnc>>>8;
-	       decTable[i][s] = tDec = tDec<<24 ^ tDec>>>8;
-	     }
-	   }
-	   
-	   // Compactify.  Considerable speedup on Firefox.
-	   for (i = 0; i < 5; i++) {
-	     encTable[i] = encTable[i].slice(0);
-	     decTable[i] = decTable[i].slice(0);
-	   }
-	  },
-	  
-	  /**
-	   * Encryption and decryption core.
-	   * @param {Array} input Four words to be encrypted or decrypted.
-	   * @param dir The direction, 0 for encrypt and 1 for decrypt.
-	   * @return {Array} The four encrypted or decrypted words.
-	   * @private
-	   */
-	  _crypt:function (input, dir) {
-	    if (input.length !== 4) {
-	      throw new sjcl.exception.invalid("invalid aes block size");
-	    }
-	    
-	    var key = this._key[dir],
-	        // state variables a,b,c,d are loaded with pre-whitened data
-	        a = input[0]           ^ key[0],
-	        b = input[dir ? 3 : 1] ^ key[1],
-	        c = input[2]           ^ key[2],
-	        d = input[dir ? 1 : 3] ^ key[3],
-	        a2, b2, c2,
-	        
-	        nInnerRounds = key.length/4 - 2,
-	        i,
-	        kIndex = 4,
-	        out = [0,0,0,0],
-	        table = this._tables[dir],
-	        
-	        // load up the tables
-	        t0    = table[0],
-	        t1    = table[1],
-	        t2    = table[2],
-	        t3    = table[3],
-	        sbox  = table[4];
-	 
-	    // Inner rounds.  Cribbed from OpenSSL.
-	    for (i = 0; i < nInnerRounds; i++) {
-	      a2 = t0[a>>>24] ^ t1[b>>16 & 255] ^ t2[c>>8 & 255] ^ t3[d & 255] ^ key[kIndex];
-	      b2 = t0[b>>>24] ^ t1[c>>16 & 255] ^ t2[d>>8 & 255] ^ t3[a & 255] ^ key[kIndex + 1];
-	      c2 = t0[c>>>24] ^ t1[d>>16 & 255] ^ t2[a>>8 & 255] ^ t3[b & 255] ^ key[kIndex + 2];
-	      d  = t0[d>>>24] ^ t1[a>>16 & 255] ^ t2[b>>8 & 255] ^ t3[c & 255] ^ key[kIndex + 3];
-	      kIndex += 4;
-	      a=a2; b=b2; c=c2;
-	    }
-	        
-	    // Last round.
-	    for (i = 0; i < 4; i++) {
-	      out[dir ? 3&-i : i] =
-	        sbox[a>>>24      ]<<24 ^ 
-	        sbox[b>>16  & 255]<<16 ^
-	        sbox[c>>8   & 255]<<8  ^
-	        sbox[d      & 255]     ^
-	        key[kIndex++];
-	      a2=a; a=b; b=c; c=d; d=a2;
-	    }
-	    
-	    return out;
-	  }
-	};
-
-
-	/** @fileOverview Arrays of bits, encoded as arrays of Numbers.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @namespace Arrays of bits, encoded as arrays of Numbers.
-	 *
-	 * @description
-	 * <p>
-	 * These objects are the currency accepted by SJCL's crypto functions.
-	 * </p>
-	 *
-	 * <p>
-	 * Most of our crypto primitives operate on arrays of 4-byte words internally,
-	 * but many of them can take arguments that are not a multiple of 4 bytes.
-	 * This library encodes arrays of bits (whose size need not be a multiple of 8
-	 * bits) as arrays of 32-bit words.  The bits are packed, big-endian, into an
-	 * array of words, 32 bits at a time.  Since the words are double-precision
-	 * floating point numbers, they fit some extra data.  We use this (in a private,
-	 * possibly-changing manner) to encode the number of bits actually  present
-	 * in the last word of the array.
-	 * </p>
-	 *
-	 * <p>
-	 * Because bitwise ops clear this out-of-band data, these arrays can be passed
-	 * to ciphers like AES which want arrays of words.
-	 * </p>
-	 */
-	sjcl.bitArray = {
-	  /**
-	   * Array slices in units of bits.
-	   * @param {bitArray} a The array to slice.
-	   * @param {Number} bstart The offset to the start of the slice, in bits.
-	   * @param {Number} bend The offset to the end of the slice, in bits.  If this is undefined,
-	   * slice until the end of the array.
-	   * @return {bitArray} The requested slice.
-	   */
-	  bitSlice: function (a, bstart, bend) {
-	    a = sjcl.bitArray._shiftRight(a.slice(bstart/32), 32 - (bstart & 31)).slice(1);
-	    return (bend === undefined) ? a : sjcl.bitArray.clamp(a, bend-bstart);
-	  },
-
-	  /**
-	   * Extract a number packed into a bit array.
-	   * @param {bitArray} a The array to slice.
-	   * @param {Number} bstart The offset to the start of the slice, in bits.
-	   * @param {Number} length The length of the number to extract.
-	   * @return {Number} The requested slice.
-	   */
-	  extract: function(a, bstart, blength) {
-	    // FIXME: this Math.floor is not necessary at all, but for some reason
-	    // seems to suppress a bug in the Chromium JIT.
-	    var x, sh = Math.floor((-bstart-blength) & 31);
-	    if ((bstart + blength - 1 ^ bstart) & -32) {
-	      // it crosses a boundary
-	      x = (a[bstart/32|0] << (32 - sh)) ^ (a[bstart/32+1|0] >>> sh);
-	    } else {
-	      // within a single word
-	      x = a[bstart/32|0] >>> sh;
-	    }
-	    return x & ((1<<blength) - 1);
-	  },
-
-	  /**
-	   * Concatenate two bit arrays.
-	   * @param {bitArray} a1 The first array.
-	   * @param {bitArray} a2 The second array.
-	   * @return {bitArray} The concatenation of a1 and a2.
-	   */
-	  concat: function (a1, a2) {
-	    if (a1.length === 0 || a2.length === 0) {
-	      return a1.concat(a2);
-	    }
-	    
-	    var out, i, last = a1[a1.length-1], shift = sjcl.bitArray.getPartial(last);
-	    if (shift === 32) {
-	      return a1.concat(a2);
-	    } else {
-	      return sjcl.bitArray._shiftRight(a2, shift, last|0, a1.slice(0,a1.length-1));
-	    }
-	  },
-
-	  /**
-	   * Find the length of an array of bits.
-	   * @param {bitArray} a The array.
-	   * @return {Number} The length of a, in bits.
-	   */
-	  bitLength: function (a) {
-	    var l = a.length, x;
-	    if (l === 0) { return 0; }
-	    x = a[l - 1];
-	    return (l-1) * 32 + sjcl.bitArray.getPartial(x);
-	  },
-
-	  /**
-	   * Truncate an array.
-	   * @param {bitArray} a The array.
-	   * @param {Number} len The length to truncate to, in bits.
-	   * @return {bitArray} A new array, truncated to len bits.
-	   */
-	  clamp: function (a, len) {
-	    if (a.length * 32 < len) { return a; }
-	    a = a.slice(0, Math.ceil(len / 32));
-	    var l = a.length;
-	    len = len & 31;
-	    if (l > 0 && len) {
-	      a[l-1] = sjcl.bitArray.partial(len, a[l-1] & 0x80000000 >> (len-1), 1);
-	    }
-	    return a;
-	  },
-
-	  /**
-	   * Make a partial word for a bit array.
-	   * @param {Number} len The number of bits in the word.
-	   * @param {Number} x The bits.
-	   * @param {Number} [0] _end Pass 1 if x has already been shifted to the high side.
-	   * @return {Number} The partial word.
-	   */
-	  partial: function (len, x, _end) {
-	    if (len === 32) { return x; }
-	    return (_end ? x|0 : x << (32-len)) + len * 0x10000000000;
-	  },
-
-	  /**
-	   * Get the number of bits used by a partial word.
-	   * @param {Number} x The partial word.
-	   * @return {Number} The number of bits used by the partial word.
-	   */
-	  getPartial: function (x) {
-	    return Math.round(x/0x10000000000) || 32;
-	  },
-
-	  /**
-	   * Compare two arrays for equality in a predictable amount of time.
-	   * @param {bitArray} a The first array.
-	   * @param {bitArray} b The second array.
-	   * @return {boolean} true if a == b; false otherwise.
-	   */
-	  equal: function (a, b) {
-	    if (sjcl.bitArray.bitLength(a) !== sjcl.bitArray.bitLength(b)) {
-	      return false;
-	    }
-	    var x = 0, i;
-	    for (i=0; i<a.length; i++) {
-	      x |= a[i]^b[i];
-	    }
-	    return (x === 0);
-	  },
-
-	  /** Shift an array right.
-	   * @param {bitArray} a The array to shift.
-	   * @param {Number} shift The number of bits to shift.
-	   * @param {Number} [carry=0] A byte to carry in
-	   * @param {bitArray} [out=[]] An array to prepend to the output.
-	   * @private
-	   */
-	  _shiftRight: function (a, shift, carry, out) {
-	    var i, last2=0, shift2;
-	    if (out === undefined) { out = []; }
-	    
-	    for (; shift >= 32; shift -= 32) {
-	      out.push(carry);
-	      carry = 0;
-	    }
-	    if (shift === 0) {
-	      return out.concat(a);
-	    }
-	    
-	    for (i=0; i<a.length; i++) {
-	      out.push(carry | a[i]>>>shift);
-	      carry = a[i] << (32-shift);
-	    }
-	    last2 = a.length ? a[a.length-1] : 0;
-	    shift2 = sjcl.bitArray.getPartial(last2);
-	    out.push(sjcl.bitArray.partial(shift+shift2 & 31, (shift + shift2 > 32) ? carry : out.pop(),1));
-	    return out;
-	  },
-	  
-	  /** xor a block of 4 words together.
-	   * @private
-	   */
-	  _xor4: function(x,y) {
-	    return [x[0]^y[0],x[1]^y[1],x[2]^y[2],x[3]^y[3]];
-	  }
-	};
-
-	/** @fileOverview Bit array codec implementations.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-	 
-	/** @namespace UTF-8 strings */
-	sjcl.codec.utf8String = {
-	  /** Convert from a bitArray to a UTF-8 string. */
-	  fromBits: function (arr) {
-	    var out = "", bl = sjcl.bitArray.bitLength(arr), i, tmp;
-	    for (i=0; i<bl/8; i++) {
-	      if ((i&3) === 0) {
-	        tmp = arr[i/4];
-	      }
-	      out += String.fromCharCode(tmp >>> 24);
-	      tmp <<= 8;
-	    }
-	    return decodeURIComponent(escape(out));
-	  },
-	  
-	  /** Convert from a UTF-8 string to a bitArray. */
-	  toBits: function (str) {
-	    str = unescape(encodeURIComponent(str));
-	    var out = [], i, tmp=0;
-	    for (i=0; i<str.length; i++) {
-	      tmp = tmp << 8 | str.charCodeAt(i);
-	      if ((i&3) === 3) {
-	        out.push(tmp);
-	        tmp = 0;
-	      }
-	    }
-	    if (i&3) {
-	      out.push(sjcl.bitArray.partial(8*(i&3), tmp));
-	    }
-	    return out;
-	  }
-	};
-
-	/** @fileOverview Bit array codec implementations.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @namespace Hexadecimal */
-	sjcl.codec.hex = {
-	  /** Convert from a bitArray to a hex string. */
-	  fromBits: function (arr) {
-	    var out = "", i, x;
-	    for (i=0; i<arr.length; i++) {
-	      out += ((arr[i]|0)+0xF00000000000).toString(16).substr(4);
-	    }
-	    return out.substr(0, sjcl.bitArray.bitLength(arr)/4);//.replace(/(.{8})/g, "$1 ");
-	  },
-	  /** Convert from a hex string to a bitArray. */
-	  toBits: function (str) {
-	    var i, out=[], len;
-	    str = str.replace(/\s|0x/g, "");
-	    len = str.length;
-	    str = str + "00000000";
-	    for (i=0; i<str.length; i+=8) {
-	      out.push(parseInt(str.substr(i,8),16)^0);
-	    }
-	    return sjcl.bitArray.clamp(out, len*4);
-	  }
-	};
-
-
-	/** @fileOverview Bit array codec implementations.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @namespace Base64 encoding/decoding */
-	sjcl.codec.base64 = {
-	  /** The base64 alphabet.
-	   * @private
-	   */
-	  _chars: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
-	  
-	  /** Convert from a bitArray to a base64 string. */
-	  fromBits: function (arr, _noEquals, _url) {
-	    var out = "", i, bits=0, c = sjcl.codec.base64._chars, ta=0, bl = sjcl.bitArray.bitLength(arr);
-	    if (_url) c = c.substr(0,62) + '-_';
-	    for (i=0; out.length * 6 < bl; ) {
-	      out += c.charAt((ta ^ arr[i]>>>bits) >>> 26);
-	      if (bits < 6) {
-	        ta = arr[i] << (6-bits);
-	        bits += 26;
-	        i++;
-	      } else {
-	        ta <<= 6;
-	        bits -= 6;
-	      }
-	    }
-	    while ((out.length & 3) && !_noEquals) { out += "="; }
-	    return out;
-	  },
-	  
-	  /** Convert from a base64 string to a bitArray */
-	  toBits: function(str, _url) {
-	    str = str.replace(/\s|=/g,'');
-	    var out = [], i, bits=0, c = sjcl.codec.base64._chars, ta=0, x;
-	    if (_url) c = c.substr(0,62) + '-_';
-	    for (i=0; i<str.length; i++) {
-	      x = c.indexOf(str.charAt(i));
-	      if (x < 0) {
-	        throw new sjcl.exception.invalid("this isn't base64!");
-	      }
-	      if (bits > 26) {
-	        bits -= 26;
-	        out.push(ta ^ x>>>bits);
-	        ta  = x << (32-bits);
-	      } else {
-	        bits += 6;
-	        ta ^= x << (32-bits);
-	      }
-	    }
-	    if (bits&56) {
-	      out.push(sjcl.bitArray.partial(bits&56, ta, 1));
-	    }
-	    return out;
-	  }
-	};
-
-	sjcl.codec.base64url = {
-	  fromBits: function (arr) { return sjcl.codec.base64.fromBits(arr,1,1); },
-	  toBits: function (str) { return sjcl.codec.base64.toBits(str,1); }
-	};
-
-	/** @fileOverview Bit array codec implementations.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @namespace Arrays of bytes */
-	sjcl.codec.bytes = {
-	  /** Convert from a bitArray to an array of bytes. */
-	  fromBits: function (arr) {
-	    var out = [], bl = sjcl.bitArray.bitLength(arr), i, tmp;
-	    for (i=0; i<bl/8; i++) {
-	      if ((i&3) === 0) {
-	        tmp = arr[i/4];
-	      }
-	      out.push(tmp >>> 24);
-	      tmp <<= 8;
-	    }
-	    return out;
-	  },
-	  /** Convert from an array of bytes to a bitArray. */
-	  toBits: function (bytes) {
-	    var out = [], i, tmp=0;
-	    for (i=0; i<bytes.length; i++) {
-	      tmp = tmp << 8 | bytes[i];
-	      if ((i&3) === 3) {
-	        out.push(tmp);
-	        tmp = 0;
-	      }
-	    }
-	    if (i&3) {
-	      out.push(sjcl.bitArray.partial(8*(i&3), tmp));
-	    }
-	    return out;
-	  }
-	};
-
-	/** @fileOverview Javascript SHA-256 implementation.
-	 *
-	 * An older version of this implementation is available in the public
-	 * domain, but this one is (c) Emily Stark, Mike Hamburg, Dan Boneh,
-	 * Stanford University 2008-2010 and BSD-licensed for liability
-	 * reasons.
-	 *
-	 * Special thanks to Aldo Cortesi for pointing out several bugs in
-	 * this code.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/**
-	 * Context for a SHA-256 operation in progress.
-	 * @constructor
-	 * @class Secure Hash Algorithm, 256 bits.
-	 */
-	sjcl.hash.sha256 = function (hash) {
-	  if (!this._key[0]) { this._precompute(); }
-	  if (hash) {
-	    this._h = hash._h.slice(0);
-	    this._buffer = hash._buffer.slice(0);
-	    this._length = hash._length;
-	  } else {
-	    this.reset();
-	  }
-	};
-
-	/**
-	 * Hash a string or an array of words.
-	 * @static
-	 * @param {bitArray|String} data the data to hash.
-	 * @return {bitArray} The hash value, an array of 16 big-endian words.
-	 */
-	sjcl.hash.sha256.hash = function (data) {
-	  return (new sjcl.hash.sha256()).update(data).finalize();
-	};
-
-	sjcl.hash.sha256.prototype = {
-	  /**
-	   * The hash's block size, in bits.
-	   * @constant
-	   */
-	  blockSize: 512,
-	   
-	  /**
-	   * Reset the hash state.
-	   * @return this
-	   */
-	  reset:function () {
-	    this._h = this._init.slice(0);
-	    this._buffer = [];
-	    this._length = 0;
-	    return this;
-	  },
-	  
-	  /**
-	   * Input several words to the hash.
-	   * @param {bitArray|String} data the data to hash.
-	   * @return this
-	   */
-	  update: function (data) {
-	    if (typeof data === "string") {
-	      data = sjcl.codec.utf8String.toBits(data);
-	    }
-	    var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
-	        ol = this._length,
-	        nl = this._length = ol + sjcl.bitArray.bitLength(data);
-	    for (i = 512+ol & -512; i <= nl; i+= 512) {
-	      this._block(b.splice(0,16));
-	    }
-	    return this;
-	  },
-	  
-	  /**
-	   * Complete hashing and output the hash value.
-	   * @return {bitArray} The hash value, an array of 8 big-endian words.
-	   */
-	  finalize:function () {
-	    var i, b = this._buffer, h = this._h;
-
-	    // Round out and push the buffer
-	    b = sjcl.bitArray.concat(b, [sjcl.bitArray.partial(1,1)]);
-	    
-	    // Round out the buffer to a multiple of 16 words, less the 2 length words.
-	    for (i = b.length + 2; i & 15; i++) {
-	      b.push(0);
-	    }
-	    
-	    // append the length
-	    b.push(Math.floor(this._length / 0x100000000));
-	    b.push(this._length | 0);
-
-	    while (b.length) {
-	      this._block(b.splice(0,16));
-	    }
-
-	    this.reset();
-	    return h;
-	  },
-
-	  /**
-	   * The SHA-256 initialization vector, to be precomputed.
-	   * @private
-	   */
-	  _init:[],
-	  /*
-	  _init:[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19],
-	  */
-	  
-	  /**
-	   * The SHA-256 hash key, to be precomputed.
-	   * @private
-	   */
-	  _key:[],
-	  /*
-	  _key:
-	    [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-	     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-	     0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-	     0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-	     0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-	     0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-	     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-	     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2],
-	  */
-
-
-	  /**
-	   * Function to precompute _init and _key.
-	   * @private
-	   */
-	  _precompute: function () {
-	    var i = 0, prime = 2, factor;
-
-	    function frac(x) { return (x-Math.floor(x)) * 0x100000000 | 0; }
-
-	    outer: for (; i<64; prime++) {
-	      for (factor=2; factor*factor <= prime; factor++) {
-	        if (prime % factor === 0) {
-	          // not a prime
-	          continue outer;
-	        }
-	      }
-	      
-	      if (i<8) {
-	        this._init[i] = frac(Math.pow(prime, 1/2));
-	      }
-	      this._key[i] = frac(Math.pow(prime, 1/3));
-	      i++;
-	    }
-	  },
-	  
-	  /**
-	   * Perform one cycle of SHA-256.
-	   * @param {bitArray} words one block of words.
-	   * @private
-	   */
-	  _block:function (words) {  
-	    var i, tmp, a, b,
-	      w = words.slice(0),
-	      h = this._h,
-	      k = this._key,
-	      h0 = h[0], h1 = h[1], h2 = h[2], h3 = h[3],
-	      h4 = h[4], h5 = h[5], h6 = h[6], h7 = h[7];
-
-	    /* Rationale for placement of |0 :
-	     * If a value can overflow is original 32 bits by a factor of more than a few
-	     * million (2^23 ish), there is a possibility that it might overflow the
-	     * 53-bit mantissa and lose precision.
-	     *
-	     * To avoid this, we clamp back to 32 bits by |'ing with 0 on any value that
-	     * propagates around the loop, and on the hash state h[].  I don't believe
-	     * that the clamps on h4 and on h0 are strictly necessary, but it's close
-	     * (for h4 anyway), and better safe than sorry.
-	     *
-	     * The clamps on h[] are necessary for the output to be correct even in the
-	     * common case and for short inputs.
-	     */
-	    for (i=0; i<64; i++) {
-	      // load up the input word for this round
-	      if (i<16) {
-	        tmp = w[i];
-	      } else {
-	        a   = w[(i+1 ) & 15];
-	        b   = w[(i+14) & 15];
-	        tmp = w[i&15] = ((a>>>7  ^ a>>>18 ^ a>>>3  ^ a<<25 ^ a<<14) + 
-	                         (b>>>17 ^ b>>>19 ^ b>>>10 ^ b<<15 ^ b<<13) +
-	                         w[i&15] + w[(i+9) & 15]) | 0;
-	      }
-	      
-	      tmp = (tmp + h7 + (h4>>>6 ^ h4>>>11 ^ h4>>>25 ^ h4<<26 ^ h4<<21 ^ h4<<7) +  (h6 ^ h4&(h5^h6)) + k[i]); // | 0;
-	      
-	      // shift register
-	      h7 = h6; h6 = h5; h5 = h4;
-	      h4 = h3 + tmp | 0;
-	      h3 = h2; h2 = h1; h1 = h0;
-
-	      h0 = (tmp +  ((h1&h2) ^ (h3&(h1^h2))) + (h1>>>2 ^ h1>>>13 ^ h1>>>22 ^ h1<<30 ^ h1<<19 ^ h1<<10)) | 0;
-	    }
-
-	    h[0] = h[0]+h0 | 0;
-	    h[1] = h[1]+h1 | 0;
-	    h[2] = h[2]+h2 | 0;
-	    h[3] = h[3]+h3 | 0;
-	    h[4] = h[4]+h4 | 0;
-	    h[5] = h[5]+h5 | 0;
-	    h[6] = h[6]+h6 | 0;
-	    h[7] = h[7]+h7 | 0;
-	  }
-	};
-
-
-
-	/** @fileOverview Javascript SHA-512 implementation.
-	 *
-	 * This implementation was written for CryptoJS by Jeff Mott and adapted for
-	 * SJCL by Stefan Thomas.
-	 *
-	 * CryptoJS (c) 2009–2012 by Jeff Mott. All rights reserved.
-	 * Released with New BSD License
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 * @author Jeff Mott
-	 * @author Stefan Thomas
-	 */
-
-	/**
-	 * Context for a SHA-512 operation in progress.
-	 * @constructor
-	 * @class Secure Hash Algorithm, 512 bits.
-	 */
-	sjcl.hash.sha512 = function (hash) {
-	  if (!this._key[0]) { this._precompute(); }
-	  if (hash) {
-	    this._h = hash._h.slice(0);
-	    this._buffer = hash._buffer.slice(0);
-	    this._length = hash._length;
-	  } else {
-	    this.reset();
-	  }
-	};
-
-	/**
-	 * Hash a string or an array of words.
-	 * @static
-	 * @param {bitArray|String} data the data to hash.
-	 * @return {bitArray} The hash value, an array of 16 big-endian words.
-	 */
-	sjcl.hash.sha512.hash = function (data) {
-	  return (new sjcl.hash.sha512()).update(data).finalize();
-	};
-
-	sjcl.hash.sha512.prototype = {
-	  /**
-	   * The hash's block size, in bits.
-	   * @constant
-	   */
-	  blockSize: 1024,
-	   
-	  /**
-	   * Reset the hash state.
-	   * @return this
-	   */
-	  reset:function () {
-	    this._h = this._init.slice(0);
-	    this._buffer = [];
-	    this._length = 0;
-	    return this;
-	  },
-	  
-	  /**
-	   * Input several words to the hash.
-	   * @param {bitArray|String} data the data to hash.
-	   * @return this
-	   */
-	  update: function (data) {
-	    if (typeof data === "string") {
-	      data = sjcl.codec.utf8String.toBits(data);
-	    }
-	    var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
-	        ol = this._length,
-	        nl = this._length = ol + sjcl.bitArray.bitLength(data);
-	    for (i = 1024+ol & -1024; i <= nl; i+= 1024) {
-	      this._block(b.splice(0,32));
-	    }
-	    return this;
-	  },
-	  
-	  /**
-	   * Complete hashing and output the hash value.
-	   * @return {bitArray} The hash value, an array of 16 big-endian words.
-	   */
-	  finalize:function () {
-	    var i, b = this._buffer, h = this._h;
-
-	    // Round out and push the buffer
-	    b = sjcl.bitArray.concat(b, [sjcl.bitArray.partial(1,1)]);
-
-	    // Round out the buffer to a multiple of 32 words, less the 4 length words.
-	    for (i = b.length + 4; i & 31; i++) {
-	      b.push(0);
-	    }
-
-	    // append the length
-	    b.push(0);
-	    b.push(0);
-	    b.push(Math.floor(this._length / 0x100000000));
-	    b.push(this._length | 0);
-
-	    while (b.length) {
-	      this._block(b.splice(0,32));
-	    }
-
-	    this.reset();
-	    return h;
-	  },
-
-	  /**
-	   * The SHA-512 initialization vector, to be precomputed.
-	   * @private
-	   */
-	  _init:[],
-
-	  /**
-	   * Least significant 24 bits of SHA512 initialization values.
-	   *
-	   * Javascript only has 53 bits of precision, so we compute the 40 most
-	   * significant bits and add the remaining 24 bits as constants.
-	   *
-	   * @private
-	   */
-	  _initr: [ 0xbcc908, 0xcaa73b, 0x94f82b, 0x1d36f1, 0xe682d1, 0x3e6c1f, 0x41bd6b, 0x7e2179 ],
-
-	  /*
-	  _init:
-	  [0x6a09e667, 0xf3bcc908, 0xbb67ae85, 0x84caa73b, 0x3c6ef372, 0xfe94f82b, 0xa54ff53a, 0x5f1d36f1,
-	   0x510e527f, 0xade682d1, 0x9b05688c, 0x2b3e6c1f, 0x1f83d9ab, 0xfb41bd6b, 0x5be0cd19, 0x137e2179],
-	  */
-
-	  /**
-	   * The SHA-512 hash key, to be precomputed.
-	   * @private
-	   */
-	  _key:[],
-
-	  /**
-	   * Least significant 24 bits of SHA512 key values.
-	   * @private
-	   */
-	  _keyr:
-	  [0x28ae22, 0xef65cd, 0x4d3b2f, 0x89dbbc, 0x48b538, 0x05d019, 0x194f9b, 0x6d8118,
-	   0x030242, 0x706fbe, 0xe4b28c, 0xffb4e2, 0x7b896f, 0x1696b1, 0xc71235, 0x692694,
-	   0xf14ad2, 0x4f25e3, 0x8cd5b5, 0xac9c65, 0x2b0275, 0xa6e483, 0x41fbd4, 0x1153b5,
-	   0x66dfab, 0xb43210, 0xfb213f, 0xef0ee4, 0xa88fc2, 0x0aa725, 0x03826f, 0x0e6e70,
-	   0xd22ffc, 0x26c926, 0xc42aed, 0x95b3df, 0xaf63de, 0x77b2a8, 0xedaee6, 0x82353b,
-	   0xf10364, 0x423001, 0xf89791, 0x54be30, 0xef5218, 0x65a910, 0x71202a, 0xbbd1b8,
-	   0xd2d0c8, 0x41ab53, 0x8eeb99, 0x9b48a8, 0xc95a63, 0x418acb, 0x63e373, 0xb2b8a3,
-	   0xefb2fc, 0x172f60, 0xf0ab72, 0x6439ec, 0x631e28, 0x82bde9, 0xc67915, 0x72532b,
-	   0x26619c, 0xc0c207, 0xe0eb1e, 0x6ed178, 0x176fba, 0xc898a6, 0xf90dae, 0x1c471b,
-	   0x047d84, 0xc72493, 0xc9bebc, 0x100d4c, 0x3e42b6, 0x657e2a, 0xd6faec, 0x475817],
-
-	  /*
-	  _key:
-	  [0x428a2f98, 0xd728ae22, 0x71374491, 0x23ef65cd, 0xb5c0fbcf, 0xec4d3b2f, 0xe9b5dba5, 0x8189dbbc,
-	   0x3956c25b, 0xf348b538, 0x59f111f1, 0xb605d019, 0x923f82a4, 0xaf194f9b, 0xab1c5ed5, 0xda6d8118,
-	   0xd807aa98, 0xa3030242, 0x12835b01, 0x45706fbe, 0x243185be, 0x4ee4b28c, 0x550c7dc3, 0xd5ffb4e2,
-	   0x72be5d74, 0xf27b896f, 0x80deb1fe, 0x3b1696b1, 0x9bdc06a7, 0x25c71235, 0xc19bf174, 0xcf692694,
-	   0xe49b69c1, 0x9ef14ad2, 0xefbe4786, 0x384f25e3, 0x0fc19dc6, 0x8b8cd5b5, 0x240ca1cc, 0x77ac9c65,
-	   0x2de92c6f, 0x592b0275, 0x4a7484aa, 0x6ea6e483, 0x5cb0a9dc, 0xbd41fbd4, 0x76f988da, 0x831153b5,
-	   0x983e5152, 0xee66dfab, 0xa831c66d, 0x2db43210, 0xb00327c8, 0x98fb213f, 0xbf597fc7, 0xbeef0ee4,
-	   0xc6e00bf3, 0x3da88fc2, 0xd5a79147, 0x930aa725, 0x06ca6351, 0xe003826f, 0x14292967, 0x0a0e6e70,
-	   0x27b70a85, 0x46d22ffc, 0x2e1b2138, 0x5c26c926, 0x4d2c6dfc, 0x5ac42aed, 0x53380d13, 0x9d95b3df,
-	   0x650a7354, 0x8baf63de, 0x766a0abb, 0x3c77b2a8, 0x81c2c92e, 0x47edaee6, 0x92722c85, 0x1482353b,
-	   0xa2bfe8a1, 0x4cf10364, 0xa81a664b, 0xbc423001, 0xc24b8b70, 0xd0f89791, 0xc76c51a3, 0x0654be30,
-	   0xd192e819, 0xd6ef5218, 0xd6990624, 0x5565a910, 0xf40e3585, 0x5771202a, 0x106aa070, 0x32bbd1b8,
-	   0x19a4c116, 0xb8d2d0c8, 0x1e376c08, 0x5141ab53, 0x2748774c, 0xdf8eeb99, 0x34b0bcb5, 0xe19b48a8,
-	   0x391c0cb3, 0xc5c95a63, 0x4ed8aa4a, 0xe3418acb, 0x5b9cca4f, 0x7763e373, 0x682e6ff3, 0xd6b2b8a3,
-	   0x748f82ee, 0x5defb2fc, 0x78a5636f, 0x43172f60, 0x84c87814, 0xa1f0ab72, 0x8cc70208, 0x1a6439ec,
-	   0x90befffa, 0x23631e28, 0xa4506ceb, 0xde82bde9, 0xbef9a3f7, 0xb2c67915, 0xc67178f2, 0xe372532b,
-	   0xca273ece, 0xea26619c, 0xd186b8c7, 0x21c0c207, 0xeada7dd6, 0xcde0eb1e, 0xf57d4f7f, 0xee6ed178,
-	   0x06f067aa, 0x72176fba, 0x0a637dc5, 0xa2c898a6, 0x113f9804, 0xbef90dae, 0x1b710b35, 0x131c471b,
-	   0x28db77f5, 0x23047d84, 0x32caab7b, 0x40c72493, 0x3c9ebe0a, 0x15c9bebc, 0x431d67c4, 0x9c100d4c,
-	   0x4cc5d4be, 0xcb3e42b6, 0x597f299c, 0xfc657e2a, 0x5fcb6fab, 0x3ad6faec, 0x6c44198c, 0x4a475817],
-	  */
-
-	  /**
-	   * Function to precompute _init and _key.
-	   * @private
-	   */
-	  _precompute: function () {
-	    // XXX: This code is for precomputing the SHA256 constants, change for
-	    //      SHA512 and re-enable.
-	    var i = 0, prime = 2, factor;
-
-	    function frac(x)  { return (x-Math.floor(x)) * 0x100000000 | 0; }
-	    function frac2(x) { return (x-Math.floor(x)) * 0x10000000000 & 0xff; }
-
-	    outer: for (; i<80; prime++) {
-	      for (factor=2; factor*factor <= prime; factor++) {
-	        if (prime % factor === 0) {
-	          // not a prime
-	          continue outer;
-	        }
-	      }
-
-	      if (i<8) {
-	        this._init[i*2] = frac(Math.pow(prime, 1/2));
-	        this._init[i*2+1] = (frac2(Math.pow(prime, 1/2)) << 24) | this._initr[i];
-	      }
-	      this._key[i*2] = frac(Math.pow(prime, 1/3));
-	      this._key[i*2+1] = (frac2(Math.pow(prime, 1/3)) << 24) | this._keyr[i];
-	      i++;
-	    }
-	  },
-
-	  /**
-	   * Perform one cycle of SHA-512.
-	   * @param {bitArray} words one block of words.
-	   * @private
-	   */
-	  _block:function (words) {
-	    var i, wrh, wrl,
-	        w = words.slice(0),
-	        h = this._h,
-	        k = this._key,
-	        h0h = h[ 0], h0l = h[ 1], h1h = h[ 2], h1l = h[ 3],
-	        h2h = h[ 4], h2l = h[ 5], h3h = h[ 6], h3l = h[ 7],
-	        h4h = h[ 8], h4l = h[ 9], h5h = h[10], h5l = h[11],
-	        h6h = h[12], h6l = h[13], h7h = h[14], h7l = h[15];
-
-	    // Working variables
-	    var ah = h0h, al = h0l, bh = h1h, bl = h1l,
-	        ch = h2h, cl = h2l, dh = h3h, dl = h3l,
-	        eh = h4h, el = h4l, fh = h5h, fl = h5l,
-	        gh = h6h, gl = h6l, hh = h7h, hl = h7l;
-
-	    for (i=0; i<80; i++) {
-	      // load up the input word for this round
-	      if (i<16) {
-	        wrh = w[i * 2];
-	        wrl = w[i * 2 + 1];
-	      } else {
-	        // Gamma0
-	        var gamma0xh = w[(i-15) * 2];
-	        var gamma0xl = w[(i-15) * 2 + 1];
-	        var gamma0h =
-	          ((gamma0xl << 31) | (gamma0xh >>> 1)) ^
-	          ((gamma0xl << 24) | (gamma0xh >>> 8)) ^
-	           (gamma0xh >>> 7);
-	        var gamma0l =
-	          ((gamma0xh << 31) | (gamma0xl >>> 1)) ^
-	          ((gamma0xh << 24) | (gamma0xl >>> 8)) ^
-	          ((gamma0xh << 25) | (gamma0xl >>> 7));
-
-	        // Gamma1
-	        var gamma1xh = w[(i-2) * 2];
-	        var gamma1xl = w[(i-2) * 2 + 1];
-	        var gamma1h =
-	          ((gamma1xl << 13) | (gamma1xh >>> 19)) ^
-	          ((gamma1xh << 3)  | (gamma1xl >>> 29)) ^
-	           (gamma1xh >>> 6);
-	        var gamma1l =
-	          ((gamma1xh << 13) | (gamma1xl >>> 19)) ^
-	          ((gamma1xl << 3)  | (gamma1xh >>> 29)) ^
-	          ((gamma1xh << 26) | (gamma1xl >>> 6));
-
-	        // Shortcuts
-	        var wr7h = w[(i-7) * 2];
-	        var wr7l = w[(i-7) * 2 + 1];
-
-	        var wr16h = w[(i-16) * 2];
-	        var wr16l = w[(i-16) * 2 + 1];
-
-	        // W(round) = gamma0 + W(round - 7) + gamma1 + W(round - 16)
-	        wrl = gamma0l + wr7l;
-	        wrh = gamma0h + wr7h + ((wrl >>> 0) < (gamma0l >>> 0) ? 1 : 0);
-	        wrl += gamma1l;
-	        wrh += gamma1h + ((wrl >>> 0) < (gamma1l >>> 0) ? 1 : 0);
-	        wrl += wr16l;
-	        wrh += wr16h + ((wrl >>> 0) < (wr16l >>> 0) ? 1 : 0);
-	      }
-
-	      w[i*2]     = wrh |= 0;
-	      w[i*2 + 1] = wrl |= 0;
-
-	      // Ch
-	      var chh = (eh & fh) ^ (~eh & gh);
-	      var chl = (el & fl) ^ (~el & gl);
-
-	      // Maj
-	      var majh = (ah & bh) ^ (ah & ch) ^ (bh & ch);
-	      var majl = (al & bl) ^ (al & cl) ^ (bl & cl);
-
-	      // Sigma0
-	      var sigma0h = ((al << 4) | (ah >>> 28)) ^ ((ah << 30) | (al >>> 2)) ^ ((ah << 25) | (al >>> 7));
-	      var sigma0l = ((ah << 4) | (al >>> 28)) ^ ((al << 30) | (ah >>> 2)) ^ ((al << 25) | (ah >>> 7));
-
-	      // Sigma1
-	      var sigma1h = ((el << 18) | (eh >>> 14)) ^ ((el << 14) | (eh >>> 18)) ^ ((eh << 23) | (el >>> 9));
-	      var sigma1l = ((eh << 18) | (el >>> 14)) ^ ((eh << 14) | (el >>> 18)) ^ ((el << 23) | (eh >>> 9));
-
-	      // K(round)
-	      var krh = k[i*2];
-	      var krl = k[i*2+1];
-
-	      // t1 = h + sigma1 + ch + K(round) + W(round)
-	      var t1l = hl + sigma1l;
-	      var t1h = hh + sigma1h + ((t1l >>> 0) < (hl >>> 0) ? 1 : 0);
-	      t1l += chl;
-	      t1h += chh + ((t1l >>> 0) < (chl >>> 0) ? 1 : 0);
-	      t1l += krl;
-	      t1h += krh + ((t1l >>> 0) < (krl >>> 0) ? 1 : 0);
-	      t1l += wrl;
-	      t1h += wrh + ((t1l >>> 0) < (wrl >>> 0) ? 1 : 0);
-
-	      // t2 = sigma0 + maj
-	      var t2l = sigma0l + majl;
-	      var t2h = sigma0h + majh + ((t2l >>> 0) < (sigma0l >>> 0) ? 1 : 0);
-
-	      // Update working variables
-	      hh = gh;
-	      hl = gl;
-	      gh = fh;
-	      gl = fl;
-	      fh = eh;
-	      fl = el;
-	      el = (dl + t1l) | 0;
-	      eh = (dh + t1h + ((el >>> 0) < (dl >>> 0) ? 1 : 0)) | 0;
-	      dh = ch;
-	      dl = cl;
-	      ch = bh;
-	      cl = bl;
-	      bh = ah;
-	      bl = al;
-	      al = (t1l + t2l) | 0;
-	      ah = (t1h + t2h + ((al >>> 0) < (t1l >>> 0) ? 1 : 0)) | 0;
-	    }
-
-	    // Intermediate hash
-	    h0l = h[1] = (h0l + al) | 0;
-	    h[0] = (h0h + ah + ((h0l >>> 0) < (al >>> 0) ? 1 : 0)) | 0;
-	    h1l = h[3] = (h1l + bl) | 0;
-	    h[2] = (h1h + bh + ((h1l >>> 0) < (bl >>> 0) ? 1 : 0)) | 0;
-	    h2l = h[5] = (h2l + cl) | 0;
-	    h[4] = (h2h + ch + ((h2l >>> 0) < (cl >>> 0) ? 1 : 0)) | 0;
-	    h3l = h[7] = (h3l + dl) | 0;
-	    h[6] = (h3h + dh + ((h3l >>> 0) < (dl >>> 0) ? 1 : 0)) | 0;
-	    h4l = h[9] = (h4l + el) | 0;
-	    h[8] = (h4h + eh + ((h4l >>> 0) < (el >>> 0) ? 1 : 0)) | 0;
-	    h5l = h[11] = (h5l + fl) | 0;
-	    h[10] = (h5h + fh + ((h5l >>> 0) < (fl >>> 0) ? 1 : 0)) | 0;
-	    h6l = h[13] = (h6l + gl) | 0;
-	    h[12] = (h6h + gh + ((h6l >>> 0) < (gl >>> 0) ? 1 : 0)) | 0;
-	    h7l = h[15] = (h7l + hl) | 0;
-	    h[14] = (h7h + hh + ((h7l >>> 0) < (hl >>> 0) ? 1 : 0)) | 0;
-	  }
-	};
-
-
-
-	/** @fileOverview Javascript SHA-1 implementation.
-	 *
-	 * Based on the implementation in RFC 3174, method 1, and on the SJCL
-	 * SHA-256 implementation.
-	 *
-	 * @author Quinn Slack
-	 */
-
-	/**
-	 * Context for a SHA-1 operation in progress.
-	 * @constructor
-	 * @class Secure Hash Algorithm, 160 bits.
-	 */
-	sjcl.hash.sha1 = function (hash) {
-	  if (hash) {
-	    this._h = hash._h.slice(0);
-	    this._buffer = hash._buffer.slice(0);
-	    this._length = hash._length;
-	  } else {
-	    this.reset();
-	  }
-	};
-
-	/**
-	 * Hash a string or an array of words.
-	 * @static
-	 * @param {bitArray|String} data the data to hash.
-	 * @return {bitArray} The hash value, an array of 5 big-endian words.
-	 */
-	sjcl.hash.sha1.hash = function (data) {
-	  return (new sjcl.hash.sha1()).update(data).finalize();
-	};
-
-	sjcl.hash.sha1.prototype = {
-	  /**
-	   * The hash's block size, in bits.
-	   * @constant
-	   */
-	  blockSize: 512,
-	   
-	  /**
-	   * Reset the hash state.
-	   * @return this
-	   */
-	  reset:function () {
-	    this._h = this._init.slice(0);
-	    this._buffer = [];
-	    this._length = 0;
-	    return this;
-	  },
-	  
-	  /**
-	   * Input several words to the hash.
-	   * @param {bitArray|String} data the data to hash.
-	   * @return this
-	   */
-	  update: function (data) {
-	    if (typeof data === "string") {
-	      data = sjcl.codec.utf8String.toBits(data);
-	    }
-	    var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
-	        ol = this._length,
-	        nl = this._length = ol + sjcl.bitArray.bitLength(data);
-	    for (i = this.blockSize+ol & -this.blockSize; i <= nl;
-	         i+= this.blockSize) {
-	      this._block(b.splice(0,16));
-	    }
-	    return this;
-	  },
-	  
-	  /**
-	   * Complete hashing and output the hash value.
-	   * @return {bitArray} The hash value, an array of 5 big-endian words. TODO
-	   */
-	  finalize:function () {
-	    var i, b = this._buffer, h = this._h;
-
-	    // Round out and push the buffer
-	    b = sjcl.bitArray.concat(b, [sjcl.bitArray.partial(1,1)]);
-	    // Round out the buffer to a multiple of 16 words, less the 2 length words.
-	    for (i = b.length + 2; i & 15; i++) {
-	      b.push(0);
-	    }
-
-	    // append the length
-	    b.push(Math.floor(this._length / 0x100000000));
-	    b.push(this._length | 0);
-
-	    while (b.length) {
-	      this._block(b.splice(0,16));
-	    }
-
-	    this.reset();
-	    return h;
-	  },
-
-	  /**
-	   * The SHA-1 initialization vector.
-	   * @private
-	   */
-	  _init:[0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0],
-
-	  /**
-	   * The SHA-1 hash key.
-	   * @private
-	   */
-	  _key:[0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xCA62C1D6],
-
-	  /**
-	   * The SHA-1 logical functions f(0), f(1), ..., f(79).
-	   * @private
-	   */
-	  _f:function(t, b, c, d) {
-	    if (t <= 19) {
-	      return (b & c) | (~b & d);
-	    } else if (t <= 39) {
-	      return b ^ c ^ d;
-	    } else if (t <= 59) {
-	      return (b & c) | (b & d) | (c & d);
-	    } else if (t <= 79) {
-	      return b ^ c ^ d;
-	    }
-	  },
-
-	  /**
-	   * Circular left-shift operator.
-	   * @private
-	   */
-	  _S:function(n, x) {
-	    return (x << n) | (x >>> 32-n);
-	  },
-	  
-	  /**
-	   * Perform one cycle of SHA-1.
-	   * @param {bitArray} words one block of words.
-	   * @private
-	   */
-	  _block:function (words) {  
-	    var t, tmp, a, b, c, d, e,
-	    w = words.slice(0),
-	    h = this._h,
-	    k = this._key;
-	   
-	    a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; 
-
-	    for (t=0; t<=79; t++) {
-	      if (t >= 16) {
-	        w[t] = this._S(1, w[t-3] ^ w[t-8] ^ w[t-14] ^ w[t-16]);
-	      }
-	      tmp = (this._S(5, a) + this._f(t, b, c, d) + e + w[t] +
-	             this._key[Math.floor(t/20)]) | 0;
-	      e = d;
-	      d = c;
-	      c = this._S(30, b);
-	      b = a;
-	      a = tmp;
-	   }
-
-	   h[0] = (h[0]+a) |0;
-	   h[1] = (h[1]+b) |0;
-	   h[2] = (h[2]+c) |0;
-	   h[3] = (h[3]+d) |0;
-	   h[4] = (h[4]+e) |0;
-	  }
-	};
-
-	/** @fileOverview CCM mode implementation.
-	 *
-	 * Special thanks to Roy Nicholson for pointing out a bug in our
-	 * implementation.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @namespace CTR mode with CBC MAC. */
-	sjcl.mode.ccm = {
-	  /** The name of the mode.
-	   * @constant
-	   */
-	  name: "ccm",
-	  
-	  /** Encrypt in CCM mode.
-	   * @static
-	   * @param {Object} prf The pseudorandom function.  It must have a block size of 16 bytes.
-	   * @param {bitArray} plaintext The plaintext data.
-	   * @param {bitArray} iv The initialization value.
-	   * @param {bitArray} [adata=[]] The authenticated data.
-	   * @param {Number} [tlen=64] the desired tag length, in bits.
-	   * @return {bitArray} The encrypted data, an array of bytes.
-	   */
-	  encrypt: function(prf, plaintext, iv, adata, tlen) {
-	    var L, i, out = plaintext.slice(0), tag, w=sjcl.bitArray, ivl = w.bitLength(iv) / 8, ol = w.bitLength(out) / 8;
-	    tlen = tlen || 64;
-	    adata = adata || [];
-	    
-	    if (ivl < 7) {
-	      throw new sjcl.exception.invalid("ccm: iv must be at least 7 bytes");
-	    }
-	    
-	    // compute the length of the length
-	    for (L=2; L<4 && ol >>> 8*L; L++) {}
-	    if (L < 15 - ivl) { L = 15-ivl; }
-	    iv = w.clamp(iv,8*(15-L));
-	    
-	    // compute the tag
-	    tag = sjcl.mode.ccm._computeTag(prf, plaintext, iv, adata, tlen, L);
-	    
-	    // encrypt
-	    out = sjcl.mode.ccm._ctrMode(prf, out, iv, tag, tlen, L);
-	    
-	    return w.concat(out.data, out.tag);
-	  },
-	  
-	  /** Decrypt in CCM mode.
-	   * @static
-	   * @param {Object} prf The pseudorandom function.  It must have a block size of 16 bytes.
-	   * @param {bitArray} ciphertext The ciphertext data.
-	   * @param {bitArray} iv The initialization value.
-	   * @param {bitArray} [[]] adata The authenticated data.
-	   * @param {Number} [64] tlen the desired tag length, in bits.
-	   * @return {bitArray} The decrypted data.
-	   */
-	  decrypt: function(prf, ciphertext, iv, adata, tlen) {
-	    tlen = tlen || 64;
-	    adata = adata || [];
-	    var L, i, 
-	        w=sjcl.bitArray,
-	        ivl = w.bitLength(iv) / 8,
-	        ol = w.bitLength(ciphertext), 
-	        out = w.clamp(ciphertext, ol - tlen),
-	        tag = w.bitSlice(ciphertext, ol - tlen), tag2;
-	    
-
-	    ol = (ol - tlen) / 8;
-	        
-	    if (ivl < 7) {
-	      throw new sjcl.exception.invalid("ccm: iv must be at least 7 bytes");
-	    }
-	    
-	    // compute the length of the length
-	    for (L=2; L<4 && ol >>> 8*L; L++) {}
-	    if (L < 15 - ivl) { L = 15-ivl; }
-	    iv = w.clamp(iv,8*(15-L));
-	    
-	    // decrypt
-	    out = sjcl.mode.ccm._ctrMode(prf, out, iv, tag, tlen, L);
-	    
-	    // check the tag
-	    tag2 = sjcl.mode.ccm._computeTag(prf, out.data, iv, adata, tlen, L);
-	    if (!w.equal(out.tag, tag2)) {
-	      throw new sjcl.exception.corrupt("ccm: tag doesn't match");
-	    }
-	    
-	    return out.data;
-	  },
-
-	  /* Compute the (unencrypted) authentication tag, according to the CCM specification
-	   * @param {Object} prf The pseudorandom function.
-	   * @param {bitArray} plaintext The plaintext data.
-	   * @param {bitArray} iv The initialization value.
-	   * @param {bitArray} adata The authenticated data.
-	   * @param {Number} tlen the desired tag length, in bits.
-	   * @return {bitArray} The tag, but not yet encrypted.
-	   * @private
-	   */
-	  _computeTag: function(prf, plaintext, iv, adata, tlen, L) {
-	    // compute B[0]
-	    var q, mac, field = 0, offset = 24, tmp, i, macData = [], w=sjcl.bitArray, xor = w._xor4;
-
-	    tlen /= 8;
-	  
-	    // check tag length and message length
-	    if (tlen % 2 || tlen < 4 || tlen > 16) {
-	      throw new sjcl.exception.invalid("ccm: invalid tag length");
-	    }
-	  
-	    if (adata.length > 0xFFFFFFFF || plaintext.length > 0xFFFFFFFF) {
-	      // I don't want to deal with extracting high words from doubles.
-	      throw new sjcl.exception.bug("ccm: can't deal with 4GiB or more data");
-	    }
-
-	    // mac the flags
-	    mac = [w.partial(8, (adata.length ? 1<<6 : 0) | (tlen-2) << 2 | L-1)];
-
-	    // mac the iv and length
-	    mac = w.concat(mac, iv);
-	    mac[3] |= w.bitLength(plaintext)/8;
-	    mac = prf.encrypt(mac);
-	    
-	  
-	    if (adata.length) {
-	      // mac the associated data.  start with its length...
-	      tmp = w.bitLength(adata)/8;
-	      if (tmp <= 0xFEFF) {
-	        macData = [w.partial(16, tmp)];
-	      } else if (tmp <= 0xFFFFFFFF) {
-	        macData = w.concat([w.partial(16,0xFFFE)], [tmp]);
-	      } // else ...
-	    
-	      // mac the data itself
-	      macData = w.concat(macData, adata);
-	      for (i=0; i<macData.length; i += 4) {
-	        mac = prf.encrypt(xor(mac, macData.slice(i,i+4).concat([0,0,0])));
-	      }
-	    }
-	  
-	    // mac the plaintext
-	    for (i=0; i<plaintext.length; i+=4) {
-	      mac = prf.encrypt(xor(mac, plaintext.slice(i,i+4).concat([0,0,0])));
-	    }
-
-	    return w.clamp(mac, tlen * 8);
-	  },
-
-	  /** CCM CTR mode.
-	   * Encrypt or decrypt data and tag with the prf in CCM-style CTR mode.
-	   * May mutate its arguments.
-	   * @param {Object} prf The PRF.
-	   * @param {bitArray} data The data to be encrypted or decrypted.
-	   * @param {bitArray} iv The initialization vector.
-	   * @param {bitArray} tag The authentication tag.
-	   * @param {Number} tlen The length of th etag, in bits.
-	   * @param {Number} L The CCM L value.
-	   * @return {Object} An object with data and tag, the en/decryption of data and tag values.
-	   * @private
-	   */
-	  _ctrMode: function(prf, data, iv, tag, tlen, L) {
-	    var enc, i, w=sjcl.bitArray, xor = w._xor4, ctr, b, l = data.length, bl=w.bitLength(data);
-
-	    // start the ctr
-	    ctr = w.concat([w.partial(8,L-1)],iv).concat([0,0,0]).slice(0,4);
-	    
-	    // en/decrypt the tag
-	    tag = w.bitSlice(xor(tag,prf.encrypt(ctr)), 0, tlen);
-	  
-	    // en/decrypt the data
-	    if (!l) { return {tag:tag, data:[]}; }
-	    
-	    for (i=0; i<l; i+=4) {
-	      ctr[3]++;
-	      enc = prf.encrypt(ctr);
-	      data[i]   ^= enc[0];
-	      data[i+1] ^= enc[1];
-	      data[i+2] ^= enc[2];
-	      data[i+3] ^= enc[3];
-	    }
-	    return { tag:tag, data:w.clamp(data,bl) };
-	  }
-	};
-
-	/** @fileOverview GCM mode implementation.
-	 *
-	 * @author Juho Vähä-Herttua
-	 */
-
-	/** @namespace Galois/Counter mode. */
-	sjcl.mode.gcm = {
-	  /** The name of the mode.
-	   * @constant
-	   */
-	  name: "gcm",
-	  
-	  /** Encrypt in GCM mode.
-	   * @static
-	   * @param {Object} prf The pseudorandom function.  It must have a block size of 16 bytes.
-	   * @param {bitArray} plaintext The plaintext data.
-	   * @param {bitArray} iv The initialization value.
-	   * @param {bitArray} [adata=[]] The authenticated data.
-	   * @param {Number} [tlen=128] The desired tag length, in bits.
-	   * @return {bitArray} The encrypted data, an array of bytes.
-	   */
-	  encrypt: function (prf, plaintext, iv, adata, tlen) {
-	    var out, data = plaintext.slice(0), w=sjcl.bitArray;
-	    tlen = tlen || 128;
-	    adata = adata || [];
-
-	    // encrypt and tag
-	    out = sjcl.mode.gcm._ctrMode(true, prf, data, adata, iv, tlen);
-
-	    return w.concat(out.data, out.tag);
-	  },
-	  
-	  /** Decrypt in GCM mode.
-	   * @static
-	   * @param {Object} prf The pseudorandom function.  It must have a block size of 16 bytes.
-	   * @param {bitArray} ciphertext The ciphertext data.
-	   * @param {bitArray} iv The initialization value.
-	   * @param {bitArray} [adata=[]] The authenticated data.
-	   * @param {Number} [tlen=128] The desired tag length, in bits.
-	   * @return {bitArray} The decrypted data.
-	   */
-	  decrypt: function (prf, ciphertext, iv, adata, tlen) {
-	    var out, data = ciphertext.slice(0), tag, w=sjcl.bitArray, l=w.bitLength(data);
-	    tlen = tlen || 128;
-	    adata = adata || [];
-
-	    // Slice tag out of data
-	    if (tlen <= l) {
-	      tag = w.bitSlice(data, l-tlen);
-	      data = w.bitSlice(data, 0, l-tlen);
-	    } else {
-	      tag = data;
-	      data = [];
-	    }
-
-	    // decrypt and tag
-	    out = sjcl.mode.gcm._ctrMode(false, prf, data, adata, iv, tlen);
-
-	    if (!w.equal(out.tag, tag)) {
-	      throw new sjcl.exception.corrupt("gcm: tag doesn't match");
-	    }
-	    return out.data;
-	  },
-
-	  /* Compute the galois multiplication of X and Y
-	   * @private
-	   */
-	  _galoisMultiply: function (x, y) {
-	    var i, j, xi, Zi, Vi, lsb_Vi, w=sjcl.bitArray, xor=w._xor4;
-
-	    Zi = [0,0,0,0];
-	    Vi = y.slice(0);
-
-	    // Block size is 128 bits, run 128 times to get Z_128
-	    for (i=0; i<128; i++) {
-	      xi = (x[Math.floor(i/32)] & (1 << (31-i%32))) !== 0;
-	      if (xi) {
-	        // Z_i+1 = Z_i ^ V_i
-	        Zi = xor(Zi, Vi);
-	      }
-
-	      // Store the value of LSB(V_i)
-	      lsb_Vi = (Vi[3] & 1) !== 0;
-
-	      // V_i+1 = V_i >> 1
-	      for (j=3; j>0; j--) {
-	        Vi[j] = (Vi[j] >>> 1) | ((Vi[j-1]&1) << 31);
-	      }
-	      Vi[0] = Vi[0] >>> 1;
-
-	      // If LSB(V_i) is 1, V_i+1 = (V_i >> 1) ^ R
-	      if (lsb_Vi) {
-	        Vi[0] = Vi[0] ^ (0xe1 << 24);
-	      }
-	    }
-	    return Zi;
-	  },
-
-	  _ghash: function(H, Y0, data) {
-	    var Yi, i, l = data.length;
-
-	    Yi = Y0.slice(0);
-	    for (i=0; i<l; i+=4) {
-	      Yi[0] ^= 0xffffffff&data[i];
-	      Yi[1] ^= 0xffffffff&data[i+1];
-	      Yi[2] ^= 0xffffffff&data[i+2];
-	      Yi[3] ^= 0xffffffff&data[i+3];
-	      Yi = sjcl.mode.gcm._galoisMultiply(Yi, H);
-	    }
-	    return Yi;
-	  },
-
-	  /** GCM CTR mode.
-	   * Encrypt or decrypt data and tag with the prf in GCM-style CTR mode.
-	   * @param {Boolean} encrypt True if encrypt, false if decrypt.
-	   * @param {Object} prf The PRF.
-	   * @param {bitArray} data The data to be encrypted or decrypted.
-	   * @param {bitArray} iv The initialization vector.
-	   * @param {bitArray} adata The associated data to be tagged.
-	   * @param {Number} tlen The length of the tag, in bits.
-	   */
-	  _ctrMode: function(encrypt, prf, data, adata, iv, tlen) {
-	    var H, J0, S0, enc, i, ctr, tag, last, l, bl, abl, ivbl, w=sjcl.bitArray, xor=w._xor4;
-
-	    // Calculate data lengths
-	    l = data.length;
-	    bl = w.bitLength(data);
-	    abl = w.bitLength(adata);
-	    ivbl = w.bitLength(iv);
-
-	    // Calculate the parameters
-	    H = prf.encrypt([0,0,0,0]);
-	    if (ivbl === 96) {
-	      J0 = iv.slice(0);
-	      J0 = w.concat(J0, [1]);
-	    } else {
-	      J0 = sjcl.mode.gcm._ghash(H, [0,0,0,0], iv);
-	      J0 = sjcl.mode.gcm._ghash(H, J0, [0,0,Math.floor(ivbl/0x100000000),ivbl&0xffffffff]);
-	    }
-	    S0 = sjcl.mode.gcm._ghash(H, [0,0,0,0], adata);
-
-	    // Initialize ctr and tag
-	    ctr = J0.slice(0);
-	    tag = S0.slice(0);
-
-	    // If decrypting, calculate hash
-	    if (!encrypt) {
-	      tag = sjcl.mode.gcm._ghash(H, S0, data);
-	    }
-
-	    // Encrypt all the data
-	    for (i=0; i<l; i+=4) {
-	       ctr[3]++;
-	       enc = prf.encrypt(ctr);
-	       data[i]   ^= enc[0];
-	       data[i+1] ^= enc[1];
-	       data[i+2] ^= enc[2];
-	       data[i+3] ^= enc[3];
-	    }
-	    data = w.clamp(data, bl);
-
-	    // If encrypting, calculate hash
-	    if (encrypt) {
-	      tag = sjcl.mode.gcm._ghash(H, S0, data);
-	    }
-
-	    // Calculate last block from bit lengths, ugly because bitwise operations are 32-bit
-	    last = [
-	      Math.floor(abl/0x100000000), abl&0xffffffff,
-	      Math.floor(bl/0x100000000), bl&0xffffffff
-	    ];
-
-	    // Calculate the final tag block
-	    tag = sjcl.mode.gcm._ghash(H, tag, last);
-	    enc = prf.encrypt(J0);
-	    tag[0] ^= enc[0];
-	    tag[1] ^= enc[1];
-	    tag[2] ^= enc[2];
-	    tag[3] ^= enc[3];
-
-	    return { tag:w.bitSlice(tag, 0, tlen), data:data };
-	  }
-	};
-
-	/** @fileOverview HMAC implementation.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** HMAC with the specified hash function.
-	 * @constructor
-	 * @param {bitArray} key the key for HMAC.
-	 * @param {Object} [hash=sjcl.hash.sha256] The hash function to use.
-	 */
-	sjcl.misc.hmac = function (key, Hash) {
-	  this._hash = Hash = Hash || sjcl.hash.sha256;
-	  var exKey = [[],[]], i,
-	      bs = Hash.prototype.blockSize / 32;
-	  this._baseHash = [new Hash(), new Hash()];
-
-	  if (key.length > bs) {
-	    key = Hash.hash(key);
-	  }
-	  
-	  for (i=0; i<bs; i++) {
-	    exKey[0][i] = key[i]^0x36363636;
-	    exKey[1][i] = key[i]^0x5C5C5C5C;
-	  }
-	  
-	  this._baseHash[0].update(exKey[0]);
-	  this._baseHash[1].update(exKey[1]);
-	};
-
-	/** HMAC with the specified hash function.  Also called encrypt since it's a prf.
-	 * @param {bitArray|String} data The data to mac.
-	 */
-	sjcl.misc.hmac.prototype.encrypt = sjcl.misc.hmac.prototype.mac = function (data) {
-	  var w = new (this._hash)(this._baseHash[0]).update(data).finalize();
-	  return new (this._hash)(this._baseHash[1]).update(w).finalize();
-	};
-
-
-	/** @fileOverview Password-based key-derivation function, version 2.0.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** Password-Based Key-Derivation Function, version 2.0.
-	 *
-	 * Generate keys from passwords using PBKDF2-HMAC-SHA256.
-	 *
-	 * This is the method specified by RSA's PKCS #5 standard.
-	 *
-	 * @param {bitArray|String} password  The password.
-	 * @param {bitArray} salt The salt.  Should have lots of entropy.
-	 * @param {Number} [count=1000] The number of iterations.  Higher numbers make the function slower but more secure.
-	 * @param {Number} [length] The length of the derived key.  Defaults to the
-	                            output size of the hash function.
-	 * @param {Object} [Prff=sjcl.misc.hmac] The pseudorandom function family.
-	 * @return {bitArray} the derived key.
-	 */
-	sjcl.misc.pbkdf2 = function (password, salt, count, length, Prff) {
-	  count = count || 1000;
-	  
-	  if (length < 0 || count < 0) {
-	    throw sjcl.exception.invalid("invalid params to pbkdf2");
-	  }
-	  
-	  if (typeof password === "string") {
-	    password = sjcl.codec.utf8String.toBits(password);
-	  }
-	  
-	  Prff = Prff || sjcl.misc.hmac;
-	  
-	  var prf = new Prff(password),
-	      u, ui, i, j, k, out = [], b = sjcl.bitArray;
-
-	  for (k = 1; 32 * out.length < (length || 1); k++) {
-	    u = ui = prf.encrypt(b.concat(salt,[k]));
-	    
-	    for (i=1; i<count; i++) {
-	      ui = prf.encrypt(ui);
-	      for (j=0; j<ui.length; j++) {
-	        u[j] ^= ui[j];
-	      }
-	    }
-	    
-	    out = out.concat(u);
-	  }
-
-	  if (length) { out = b.clamp(out, length); }
-
-	  return out;
-	};
-
-	/** @fileOverview Random number generator.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-
-	/** @constructor
-	 * @class Random number generator
-	 *
-	 * @description
-	 * <p>
-	 * This random number generator is a derivative of Ferguson and Schneier's
-	 * generator Fortuna.  It collects entropy from various events into several
-	 * pools, implemented by streaming SHA-256 instances.  It differs from
-	 * ordinary Fortuna in a few ways, though.
-	 * </p>
-	 *
-	 * <p>
-	 * Most importantly, it has an entropy estimator.  This is present because
-	 * there is a strong conflict here between making the generator available
-	 * as soon as possible, and making sure that it doesn't "run on empty".
-	 * In Fortuna, there is a saved state file, and the system is likely to have
-	 * time to warm up.
-	 * </p>
-	 *
-	 * <p>
-	 * Second, because users are unlikely to stay on the page for very long,
-	 * and to speed startup time, the number of pools increases logarithmically:
-	 * a new pool is created when the previous one is actually used for a reseed.
-	 * This gives the same asymptotic guarantees as Fortuna, but gives more
-	 * entropy to early reseeds.
-	 * </p>
-	 *
-	 * <p>
-	 * The entire mechanism here feels pretty klunky.  Furthermore, there are
-	 * several improvements that should be made, including support for
-	 * dedicated cryptographic functions that may be present in some browsers;
-	 * state files in local storage; cookies containing randomness; etc.  So
-	 * look for improvements in future versions.
-	 * </p>
-	 */
-	sjcl.prng = function(defaultParanoia) {
-	  
-	  /* private */
-	  this._pools                   = [new sjcl.hash.sha256()];
-	  this._poolEntropy             = [0];
-	  this._reseedCount             = 0;
-	  this._robins                  = {};
-	  this._eventId                 = 0;
-	  
-	  this._collectorIds            = {};
-	  this._collectorIdNext         = 0;
-	  
-	  this._strength                = 0;
-	  this._poolStrength            = 0;
-	  this._nextReseed              = 0;
-	  this._key                     = [0,0,0,0,0,0,0,0];
-	  this._counter                 = [0,0,0,0];
-	  this._cipher                  = undefined;
-	  this._defaultParanoia         = defaultParanoia;
-	  
-	  /* event listener stuff */
-	  this._collectorsStarted       = false;
-	  this._callbacks               = {progress: {}, seeded: {}};
-	  this._callbackI               = 0;
-	  
-	  /* constants */
-	  this._NOT_READY               = 0;
-	  this._READY                   = 1;
-	  this._REQUIRES_RESEED         = 2;
-
-	  this._MAX_WORDS_PER_BURST     = 65536;
-	  this._PARANOIA_LEVELS         = [0,48,64,96,128,192,256,384,512,768,1024];
-	  this._MILLISECONDS_PER_RESEED = 30000;
-	  this._BITS_PER_RESEED         = 80;
-	}
-	 
-	sjcl.prng.prototype = {
-	  /** Generate several random words, and return them in an array
-	   * @param {Number} nwords The number of words to generate.
-	   */
-	  randomWords: function (nwords, paranoia) {
-	    var out = [], i, readiness = this.isReady(paranoia), g;
-	  
-	    if (readiness === this._NOT_READY) {
-	      throw new sjcl.exception.notReady("generator isn't seeded");
-	    } else if (readiness & this._REQUIRES_RESEED) {
-	      this._reseedFromPools(!(readiness & this._READY));
-	    }
-	  
-	    for (i=0; i<nwords; i+= 4) {
-	      if ((i+1) % this._MAX_WORDS_PER_BURST === 0) {
-	        this._gate();
-	      }
-	   
-	      g = this._gen4words();
-	      out.push(g[0],g[1],g[2],g[3]);
-	    }
-	    this._gate();
-	  
-	    return out.slice(0,nwords);
-	  },
-	  
-	  setDefaultParanoia: function (paranoia) {
-	    this._defaultParanoia = paranoia;
-	  },
-	  
-	  /**
-	   * Add entropy to the pools.
-	   * @param data The entropic value.  Should be a 32-bit integer, array of 32-bit integers, or string
-	   * @param {Number} estimatedEntropy The estimated entropy of data, in bits
-	   * @param {String} source The source of the entropy, eg "mouse"
-	   */
-	  addEntropy: function (data, estimatedEntropy, source) {
-	    source = source || "user";
-	  
-	    var id,
-	      i, tmp,
-	      t = (new Date()).valueOf(),
-	      robin = this._robins[source],
-	      oldReady = this.isReady(), err = 0;
-	      
-	    id = this._collectorIds[source];
-	    if (id === undefined) { id = this._collectorIds[source] = this._collectorIdNext ++; }
-	      
-	    if (robin === undefined) { robin = this._robins[source] = 0; }
-	    this._robins[source] = ( this._robins[source] + 1 ) % this._pools.length;
-	  
-	    switch(typeof(data)) {
-	      
-	    case "number":
-	      if (estimatedEntropy === undefined) {
-	        estimatedEntropy = 1;
-	      }
-	      this._pools[robin].update([id,this._eventId++,1,estimatedEntropy,t,1,data|0]);
-	      break;
-	      
-	    case "object":
-	      var objName = Object.prototype.toString.call(data);
-	      if (objName === "[object Uint32Array]") {
-	        tmp = [];
-	        for (i = 0; i < data.length; i++) {
-	          tmp.push(data[i]);
-	        }
-	        data = tmp;
-	      } else {
-	        if (objName !== "[object Array]") {
-	          err = 1;
-	        }
-	        for (i=0; i<data.length && !err; i++) {
-	          if (typeof(data[i]) != "number") {
-	            err = 1;
-	          }
-	        }
-	      }
-	      if (!err) {
-	        if (estimatedEntropy === undefined) {
-	          /* horrible entropy estimator */
-	          estimatedEntropy = 0;
-	          for (i=0; i<data.length; i++) {
-	            tmp= data[i];
-	            while (tmp>0) {
-	              estimatedEntropy++;
-	              tmp = tmp >>> 1;
-	            }
-	          }
-	        }
-	        this._pools[robin].update([id,this._eventId++,2,estimatedEntropy,t,data.length].concat(data));
-	      }
-	      break;
-	      
-	    case "string":
-	      if (estimatedEntropy === undefined) {
-	       /* English text has just over 1 bit per character of entropy.
-	        * But this might be HTML or something, and have far less
-	        * entropy than English...  Oh well, let's just say one bit.
-	        */
-	       estimatedEntropy = data.length;
-	      }
-	      this._pools[robin].update([id,this._eventId++,3,estimatedEntropy,t,data.length]);
-	      this._pools[robin].update(data);
-	      break;
-	      
-	    default:
-	      err=1;
-	    }
-	    if (err) {
-	      throw new sjcl.exception.bug("random: addEntropy only supports number, array of numbers or string");
-	    }
-	  
-	    /* record the new strength */
-	    this._poolEntropy[robin] += estimatedEntropy;
-	    this._poolStrength += estimatedEntropy;
-	  
-	    /* fire off events */
-	    if (oldReady === this._NOT_READY) {
-	      if (this.isReady() !== this._NOT_READY) {
-	        this._fireEvent("seeded", Math.max(this._strength, this._poolStrength));
-	      }
-	      this._fireEvent("progress", this.getProgress());
-	    }
-	  },
-	  
-	  /** Is the generator ready? */
-	  isReady: function (paranoia) {
-	    var entropyRequired = this._PARANOIA_LEVELS[ (paranoia !== undefined) ? paranoia : this._defaultParanoia ];
-	  
-	    if (this._strength && this._strength >= entropyRequired) {
-	      return (this._poolEntropy[0] > this._BITS_PER_RESEED && (new Date()).valueOf() > this._nextReseed) ?
-	        this._REQUIRES_RESEED | this._READY :
-	        this._READY;
-	    } else {
-	      return (this._poolStrength >= entropyRequired) ?
-	        this._REQUIRES_RESEED | this._NOT_READY :
-	        this._NOT_READY;
-	    }
-	  },
-	  
-	  /** Get the generator's progress toward readiness, as a fraction */
-	  getProgress: function (paranoia) {
-	    var entropyRequired = this._PARANOIA_LEVELS[ paranoia ? paranoia : this._defaultParanoia ];
-	  
-	    if (this._strength >= entropyRequired) {
-	      return 1.0;
-	    } else {
-	      return (this._poolStrength > entropyRequired) ?
-	        1.0 :
-	        this._poolStrength / entropyRequired;
-	    }
-	  },
-	  
-	  /** start the built-in entropy collectors */
-	  startCollectors: function () {
-	    if (this._collectorsStarted) { return; }
-	  
-	    if (window.addEventListener) {
-	      window.addEventListener("load", this._loadTimeCollector, false);
-	      window.addEventListener("mousemove", this._mouseCollector, false);
-	    } else if (document.attachEvent) {
-	      document.attachEvent("onload", this._loadTimeCollector);
-	      document.attachEvent("onmousemove", this._mouseCollector);
-	    }
-	    else {
-	      throw new sjcl.exception.bug("can't attach event");
-	    }
-	  
-	    this._collectorsStarted = true;
-	  },
-	  
-	  /** stop the built-in entropy collectors */
-	  stopCollectors: function () {
-	    if (!this._collectorsStarted) { return; }
-	  
-	    if (window.removeEventListener) {
-	      window.removeEventListener("load", this._loadTimeCollector, false);
-	      window.removeEventListener("mousemove", this._mouseCollector, false);
-	    } else if (window.detachEvent) {
-	      window.detachEvent("onload", this._loadTimeCollector);
-	      window.detachEvent("onmousemove", this._mouseCollector);
-	    }
-	    this._collectorsStarted = false;
-	  },
-	  
-	  /* use a cookie to store entropy.
-	  useCookie: function (all_cookies) {
-	      throw new sjcl.exception.bug("random: useCookie is unimplemented");
-	  },*/
-	  
-	  /** add an event listener for progress or seeded-ness. */
-	  addEventListener: function (name, callback) {
-	    this._callbacks[name][this._callbackI++] = callback;
-	  },
-	  
-	  /** remove an event listener for progress or seeded-ness */
-	  removeEventListener: function (name, cb) {
-	    var i, j, cbs=this._callbacks[name], jsTemp=[];
-	  
-	    /* I'm not sure if this is necessary; in C++, iterating over a
-	     * collection and modifying it at the same time is a no-no.
-	     */
-	  
-	    for (j in cbs) {
-		if (cbs.hasOwnProperty(j) && cbs[j] === cb) {
-	        jsTemp.push(j);
-	      }
-	    }
-	  
-	    for (i=0; i<jsTemp.length; i++) {
-	      j = jsTemp[i];
-	      delete cbs[j];
-	    }
-	  },
-	  
-	  /** Generate 4 random words, no reseed, no gate.
-	   * @private
-	   */
-	  _gen4words: function () {
-	    for (var i=0; i<4; i++) {
-	      this._counter[i] = this._counter[i]+1 | 0;
-	      if (this._counter[i]) { break; }
-	    }
-	    return this._cipher.encrypt(this._counter);
-	  },
-	  
-	  /* Rekey the AES instance with itself after a request, or every _MAX_WORDS_PER_BURST words.
-	   * @private
-	   */
-	  _gate: function () {
-	    this._key = this._gen4words().concat(this._gen4words());
-	    this._cipher = new sjcl.cipher.aes(this._key);
-	  },
-	  
-	  /** Reseed the generator with the given words
-	   * @private
-	   */
-	  _reseed: function (seedWords) {
-	    this._key = sjcl.hash.sha256.hash(this._key.concat(seedWords));
-	    this._cipher = new sjcl.cipher.aes(this._key);
-	    for (var i=0; i<4; i++) {
-	      this._counter[i] = this._counter[i]+1 | 0;
-	      if (this._counter[i]) { break; }
-	    }
-	  },
-	  
-	  /** reseed the data from the entropy pools
-	   * @param full If set, use all the entropy pools in the reseed.
-	   */
-	  _reseedFromPools: function (full) {
-	    var reseedData = [], strength = 0, i;
-	  
-	    this._nextReseed = reseedData[0] =
-	      (new Date()).valueOf() + this._MILLISECONDS_PER_RESEED;
-	    
-	    for (i=0; i<16; i++) {
-	      /* On some browsers, this is cryptographically random.  So we might
-	       * as well toss it in the pot and stir...
-	       */
-	      reseedData.push(Math.random()*0x100000000|0);
-	    }
-	    
-	    for (i=0; i<this._pools.length; i++) {
-	     reseedData = reseedData.concat(this._pools[i].finalize());
-	     strength += this._poolEntropy[i];
-	     this._poolEntropy[i] = 0;
-	   
-	     if (!full && (this._reseedCount & (1<<i))) { break; }
-	    }
-	  
-	    /* if we used the last pool, push a new one onto the stack */
-	    if (this._reseedCount >= 1 << this._pools.length) {
-	     this._pools.push(new sjcl.hash.sha256());
-	     this._poolEntropy.push(0);
-	    }
-	  
-	    /* how strong was this reseed? */
-	    this._poolStrength -= strength;
-	    if (strength > this._strength) {
-	      this._strength = strength;
-	    }
-	  
-	    this._reseedCount ++;
-	    this._reseed(reseedData);
-	  },
-	  
-	  _mouseCollector: function (ev) {
-	    try {
-	      var x = ev.x || ev.clientX || ev.offsetX || 0, y = ev.y || ev.clientY || ev.offsetY || 0;
-	      sjcl.random.addEntropy([x,y], 2, "mouse");
-	    } catch (err) {
-	      // Event originated from a secure element. No mouse position available.
-	    }
-	  },
-	  
-	  _loadTimeCollector: function (ev) {
-	    sjcl.random.addEntropy((new Date()).valueOf(), 2, "loadtime");
-	  },
-	  
-	  _fireEvent: function (name, arg) {
-	    var j, cbs=sjcl.random._callbacks[name], cbsTemp=[];
-	    /* TODO: there is a race condition between removing collectors and firing them */ 
-
-	    /* I'm not sure if this is necessary; in C++, iterating over a
-	     * collection and modifying it at the same time is a no-no.
-	     */
-	  
-	    for (j in cbs) {
-	     if (cbs.hasOwnProperty(j)) {
-	        cbsTemp.push(cbs[j]);
-	     }
-	    }
-	  
-	    for (j=0; j<cbsTemp.length; j++) {
-	     cbsTemp[j](arg);
-	    }
-	  }
-	};
-
-	sjcl.random = new sjcl.prng(6);
-
-	(function(){
-	  try {
-	    // get cryptographically strong entropy in Webkit
-	    var ab = new Uint32Array(32);
-	    crypto.getRandomValues(ab);
-	    sjcl.random.addEntropy(ab, 1024, "crypto.getRandomValues");
-	  } catch (e) {
-	    // no getRandomValues :-(
-	  }
-	})();
-
-	/** @fileOverview Convenince functions centered around JSON encapsulation.
-	 *
-	 * @author Emily Stark
-	 * @author Mike Hamburg
-	 * @author Dan Boneh
-	 */
-	 
-	 /** @namespace JSON encapsulation */
-	 sjcl.json = {
-	  /** Default values for encryption */
-	  defaults: { v:1, iter:1000, ks:128, ts:64, mode:"ccm", adata:"", cipher:"aes" },
-
-	  /** Simple encryption function.
-	   * @param {String|bitArray} password The password or key.
-	   * @param {String} plaintext The data to encrypt.
-	   * @param {Object} [params] The parameters including tag, iv and salt.
-	   * @param {Object} [rp] A returned version with filled-in parameters.
-	   * @return {String} The ciphertext.
-	   * @throws {sjcl.exception.invalid} if a parameter is invalid.
-	   */
-	  encrypt: function (password, plaintext, params, rp) {
-	    params = params || {};
-	    rp = rp || {};
-	    
-	    var j = sjcl.json, p = j._add({ iv: sjcl.random.randomWords(4,0) },
-	                                  j.defaults), tmp, prp, adata;
-	    j._add(p, params);
-	    adata = p.adata;
-	    if (typeof p.salt === "string") {
-	      p.salt = sjcl.codec.base64.toBits(p.salt);
-	    }
-	    if (typeof p.iv === "string") {
-	      p.iv = sjcl.codec.base64.toBits(p.iv);
-	    }
-	    
-	    if (!sjcl.mode[p.mode] ||
-	        !sjcl.cipher[p.cipher] ||
-	        (typeof password === "string" && p.iter <= 100) ||
-	        (p.ts !== 64 && p.ts !== 96 && p.ts !== 128) ||
-	        (p.ks !== 128 && p.ks !== 192 && p.ks !== 256) ||
-	        (p.iv.length < 2 || p.iv.length > 4)) {
-	      throw new sjcl.exception.invalid("json encrypt: invalid parameters");
-	    }
-	    
-	    if (typeof password === "string") {
-	      tmp = sjcl.misc.cachedPbkdf2(password, p);
-	      password = tmp.key.slice(0,p.ks/32);
-	      p.salt = tmp.salt;
-	    } else if (sjcl.ecc && password instanceof sjcl.ecc.elGamal.publicKey) {
-	      tmp = password.kem();
-	      p.kemtag = tmp.tag;
-	      password = tmp.key.slice(0,p.ks/32);
-	    }
-	    if (typeof plaintext === "string") {
-	      plaintext = sjcl.codec.utf8String.toBits(plaintext);
-	    }
-	    if (typeof adata === "string") {
-	      adata = sjcl.codec.utf8String.toBits(adata);
-	    }
-	    prp = new sjcl.cipher[p.cipher](password);
-	    
-	    /* return the json data */
-	    j._add(rp, p);
-	    rp.key = password;
-	    
-	    /* do the encryption */
-	    p.ct = sjcl.mode[p.mode].encrypt(prp, plaintext, p.iv, adata, p.ts);
-	    
-	    //return j.encode(j._subtract(p, j.defaults));
-	    return j.encode(p);
-	  },
-	  
-	  /** Simple decryption function.
-	   * @param {String|bitArray} password The password or key.
-	   * @param {String} ciphertext The ciphertext to decrypt.
-	   * @param {Object} [params] Additional non-default parameters.
-	   * @param {Object} [rp] A returned object with filled parameters.
-	   * @return {String} The plaintext.
-	   * @throws {sjcl.exception.invalid} if a parameter is invalid.
-	   * @throws {sjcl.exception.corrupt} if the ciphertext is corrupt.
-	   */
-	  decrypt: function (password, ciphertext, params, rp) {
-	    params = params || {};
-	    rp = rp || {};
-	    
-	    var j = sjcl.json, p = j._add(j._add(j._add({},j.defaults),j.decode(ciphertext)), params, true), ct, tmp, prp, adata=p.adata;
-	    if (typeof p.salt === "string") {
-	      p.salt = sjcl.codec.base64.toBits(p.salt);
-	    }
-	    if (typeof p.iv === "string") {
-	      p.iv = sjcl.codec.base64.toBits(p.iv);
-	    }
-	    
-	    if (!sjcl.mode[p.mode] ||
-	        !sjcl.cipher[p.cipher] ||
-	        (typeof password === "string" && p.iter <= 100) ||
-	        (p.ts !== 64 && p.ts !== 96 && p.ts !== 128) ||
-	        (p.ks !== 128 && p.ks !== 192 && p.ks !== 256) ||
-	        (!p.iv) ||
-	        (p.iv.length < 2 || p.iv.length > 4)) {
-	      throw new sjcl.exception.invalid("json decrypt: invalid parameters");
-	    }
-	    
-	    if (typeof password === "string") {
-	      tmp = sjcl.misc.cachedPbkdf2(password, p);
-	      password = tmp.key.slice(0,p.ks/32);
-	      p.salt  = tmp.salt;
-	    } else if (sjcl.ecc && password instanceof sjcl.ecc.elGamal.secretKey) {
-	      password = password.unkem(sjcl.codec.base64.toBits(p.kemtag)).slice(0,p.ks/32);
-	    }
-	    if (typeof adata === "string") {
-	      adata = sjcl.codec.utf8String.toBits(adata);
-	    }
-	    prp = new sjcl.cipher[p.cipher](password);
-	    
-	    /* do the decryption */
-	    ct = sjcl.mode[p.mode].decrypt(prp, p.ct, p.iv, adata, p.ts);
-	    
-	    /* return the json data */
-	    j._add(rp, p);
-	    rp.key = password;
-	    
-	    return sjcl.codec.utf8String.fromBits(ct);
-	  },
-	  
-	  /** Encode a flat structure into a JSON string.
-	   * @param {Object} obj The structure to encode.
-	   * @return {String} A JSON string.
-	   * @throws {sjcl.exception.invalid} if obj has a non-alphanumeric property.
-	   * @throws {sjcl.exception.bug} if a parameter has an unsupported type.
-	   */
-	  encode: function (obj) {
-	    var i, out='{', comma='';
-	    for (i in obj) {
-	      if (obj.hasOwnProperty(i)) {
-	        if (!i.match(/^[a-z0-9]+$/i)) {
-	          throw new sjcl.exception.invalid("json encode: invalid property name");
-	        }
-	        out += comma + '"' + i + '":';
-	        comma = ',';
-	        
-	        switch (typeof obj[i]) {
-	        case 'number':
-	        case 'boolean':
-	          out += obj[i];
-	          break;
-	          
-	        case 'string':
-	          out += '"' + escape(obj[i]) + '"';
-	          break;
-	        
-	        case 'object':
-	          out += '"' + sjcl.codec.base64.fromBits(obj[i],0) + '"';
-	          break;
-	        
-	        default:
-	          throw new sjcl.exception.bug("json encode: unsupported type");
-	        }
-	      }
-	    }
-	    return out+'}';
-	  },
-	  
-	  /** Decode a simple (flat) JSON string into a structure.  The ciphertext,
-	   * adata, salt and iv will be base64-decoded.
-	   * @param {String} str The string.
-	   * @return {Object} The decoded structure.
-	   * @throws {sjcl.exception.invalid} if str isn't (simple) JSON.
-	   */
-	  decode: function (str) {
-	    str = str.replace(/\s/g,'');
-	    if (!str.match(/^\{.*\}$/)) { 
-	      throw new sjcl.exception.invalid("json decode: this isn't json!");
-	    }
-	    var a = str.replace(/^\{|\}$/g, '').split(/,/), out={}, i, m;
-	    for (i=0; i<a.length; i++) {
-	      if (!(m=a[i].match(/^(?:(["']?)([a-z][a-z0-9]*)\1):(?:(\d+)|"([a-z0-9+\/%*_.@=\-]*)")$/i))) {
-	        throw new sjcl.exception.invalid("json decode: this isn't json!");
-	      }
-	      if (m[3]) {
-	        out[m[2]] = parseInt(m[3],10);
-	      } else {
-	        out[m[2]] = m[2].match(/^(ct|salt|iv)$/) ? sjcl.codec.base64.toBits(m[4]) : unescape(m[4]);
-	      }
-	    }
-	    return out;
-	  },
-	  
-	  /** Insert all elements of src into target, modifying and returning target.
-	   * @param {Object} target The object to be modified.
-	   * @param {Object} src The object to pull data from.
-	   * @param {boolean} [requireSame=false] If true, throw an exception if any field of target differs from corresponding field of src.
-	   * @return {Object} target.
-	   * @private
-	   */
-	  _add: function (target, src, requireSame) {
-	    if (target === undefined) { target = {}; }
-	    if (src === undefined) { return target; }
-	    var i;
-	    for (i in src) {
-	      if (src.hasOwnProperty(i)) {
-	        if (requireSame && target[i] !== undefined && target[i] !== src[i]) {
-	          throw new sjcl.exception.invalid("required parameter overridden");
-	        }
-	        target[i] = src[i];
-	      }
-	    }
-	    return target;
-	  },
-	  
-	  /** Remove all elements of minus from plus.  Does not modify plus.
-	   * @private
-	   */
-	  _subtract: function (plus, minus) {
-	    var out = {}, i;
-	    
-	    for (i in plus) {
-	      if (plus.hasOwnProperty(i) && plus[i] !== minus[i]) {
-	        out[i] = plus[i];
-	      }
-	    }
-	    
-	    return out;
-	  },
-	  
-	  /** Return only the specified elements of src.
-	   * @private
-	   */
-	  _filter: function (src, filter) {
-	    var out = {}, i;
-	    for (i=0; i<filter.length; i++) {
-	      if (src[filter[i]] !== undefined) {
-	        out[filter[i]] = src[filter[i]];
-	      }
-	    }
-	    return out;
-	  }
-	};
-
-	/** Simple encryption function; convenient shorthand for sjcl.json.encrypt.
-	 * @param {String|bitArray} password The password or key.
-	 * @param {String} plaintext The data to encrypt.
-	 * @param {Object} [params] The parameters including tag, iv and salt.
-	 * @param {Object} [rp] A returned version with filled-in parameters.
-	 * @return {String} The ciphertext.
-	 */
-	sjcl.encrypt = sjcl.json.encrypt;
-
-	/** Simple decryption function; convenient shorthand for sjcl.json.decrypt.
-	 * @param {String|bitArray} password The password or key.
-	 * @param {String} ciphertext The ciphertext to decrypt.
-	 * @param {Object} [params] Additional non-default parameters.
-	 * @param {Object} [rp] A returned object with filled parameters.
-	 * @return {String} The plaintext.
-	 */
-	sjcl.decrypt = sjcl.json.decrypt;
-
-	/** The cache for cachedPbkdf2.
-	 * @private
-	 */
-	sjcl.misc._pbkdf2Cache = {};
-
-	/** Cached PBKDF2 key derivation.
-	 * @param {String} password The password.
-	 * @param {Object} [params] The derivation params (iteration count and optional salt).
-	 * @return {Object} The derived data in key, the salt in salt.
-	 */
-	sjcl.misc.cachedPbkdf2 = function (password, obj) {
-	  var cache = sjcl.misc._pbkdf2Cache, c, cp, str, salt, iter;
-	  
-	  obj = obj || {};
-	  iter = obj.iter || 1000;
-	  
-	  /* open the cache for this password and iteration count */
-	  cp = cache[password] = cache[password] || {};
-	  c = cp[iter] = cp[iter] || { firstSalt: (obj.salt && obj.salt.length) ?
-	                     obj.salt.slice(0) : sjcl.random.randomWords(2,0) };
-	          
-	  salt = (obj.salt === undefined) ? c.firstSalt : obj.salt;
-	  
-	  c[salt] = c[salt] || sjcl.misc.pbkdf2(password, salt, obj.iter);
-	  return { key: c[salt].slice(0), salt:salt.slice(0) };
-	};
-
-
-
-	/**
-	 * @constructor
-	 * Constructs a new bignum from another bignum, a number or a hex string.
-	 */
-	sjcl.bn = function(it) {
-	  this.initWith(it);
-	};
-
-	sjcl.bn.prototype = {
-	  radix: 24,
-	  maxMul: 8,
-	  _class: sjcl.bn,
-	  
-	  copy: function() {
-	    return new this._class(this);
-	  },
-
-	  /**
-	   * Initializes this with it, either as a bn, a number, or a hex string.
-	   */
-	  initWith: function(it) {
-	    var i=0, k, n, l;
-	    switch(typeof it) {
-	    case "object":
-	      this.limbs = it.limbs.slice(0);
-	      break;
-	      
-	    case "number":
-	      this.limbs = [it];
-	      this.normalize();
-	      break;
-	      
-	    case "string":
-	      it = it.replace(/^0x/, '');
-	      this.limbs = [];
-	      // hack
-	      k = this.radix / 4;
-	      for (i=0; i < it.length; i+=k) {
-	        this.limbs.push(parseInt(it.substring(Math.max(it.length - i - k, 0), it.length - i),16));
-	      }
-	      break;
-
-	    default:
-	      this.limbs = [0];
-	    }
-	    return this;
-	  },
-
-	  /**
-	   * Returns true if "this" and "that" are equal.  Calls fullReduce().
-	   * Equality test is in constant time.
-	   */
-	  equals: function(that) {
-	    if (typeof that === "number") { that = new this._class(that); }
-	    var difference = 0, i;
-	    this.fullReduce();
-	    that.fullReduce();
-	    for (i = 0; i < this.limbs.length || i < that.limbs.length; i++) {
-	      difference |= this.getLimb(i) ^ that.getLimb(i);
-	    }
-	    return (difference === 0);
-	  },
-	  
-	  /**
-	   * Get the i'th limb of this, zero if i is too large.
-	   */
-	  getLimb: function(i) {
-	    return (i >= this.limbs.length) ? 0 : this.limbs[i];
-	  },
-	  
-	  /**
-	   * Constant time comparison function.
-	   * Returns 1 if this >= that, or zero otherwise.
-	   */
-	  greaterEquals: function(that) {
-	    if (typeof that === "number") { that = new this._class(that); }
-	    var less = 0, greater = 0, i, a, b;
-	    i = Math.max(this.limbs.length, that.limbs.length) - 1;
-	    for (; i>= 0; i--) {
-	      a = this.getLimb(i);
-	      b = that.getLimb(i);
-	      greater |= (b - a) & ~less;
-	      less |= (a - b) & ~greater;
-	    }
-	    return (greater | ~less) >>> 31;
-	  },
-	  
-	  /**
-	   * Convert to a hex string.
-	   */
-	  toString: function() {
-	    this.fullReduce();
-	    var out="", i, s, l = this.limbs;
-	    for (i=0; i < this.limbs.length; i++) {
-	      s = l[i].toString(16);
-	      while (i < this.limbs.length - 1 && s.length < 6) {
-	        s = "0" + s;
-	      }
-	      out = s + out;
-	    }
-	    return "0x"+out;
-	  },
-	  
-	  /** this += that.  Does not normalize. */
-	  addM: function(that) {
-	    if (typeof(that) !== "object") { that = new this._class(that); }
-	    var i, l=this.limbs, ll=that.limbs;
-	    for (i=l.length; i<ll.length; i++) {
-	      l[i] = 0;
-	    }
-	    for (i=0; i<ll.length; i++) {
-	      l[i] += ll[i];
-	    }
-	    return this;
-	  },
-	  
-	  /** this *= 2.  Requires normalized; ends up normalized. */
-	  doubleM: function() {
-	    var i, carry=0, tmp, r=this.radix, m=this.radixMask, l=this.limbs;
-	    for (i=0; i<l.length; i++) {
-	      tmp = l[i];
-	      tmp = tmp+tmp+carry;
-	      l[i] = tmp & m;
-	      carry = tmp >> r;
-	    }
-	    if (carry) {
-	      l.push(carry);
-	    }
-	    return this;
-	  },
-	  
-	  /** this /= 2, rounded down.  Requires normalized; ends up normalized. */
-	  halveM: function() {
-	    var i, carry=0, tmp, r=this.radix, l=this.limbs;
-	    for (i=l.length-1; i>=0; i--) {
-	      tmp = l[i];
-	      l[i] = (tmp+carry)>>1;
-	      carry = (tmp&1) << r;
-	    }
-	    if (!l[l.length-1]) {
-	      l.pop();
-	    }
-	    return this;
-	  },
-
-	  /** this -= that.  Does not normalize. */
-	  subM: function(that) {
-	    if (typeof(that) !== "object") { that = new this._class(that); }
-	    var i, l=this.limbs, ll=that.limbs;
-	    for (i=l.length; i<ll.length; i++) {
-	      l[i] = 0;
-	    }
-	    for (i=0; i<ll.length; i++) {
-	      l[i] -= ll[i];
-	    }
-	    return this;
-	  },
-	  
-	  mod: function(that) {
-	    var neg = !this.greaterEquals(new sjcl.bn(0));
-	    
-	    that = new sjcl.bn(that).normalize(); // copy before we begin
-	    var out = new sjcl.bn(this).normalize(), ci=0;
-	    
-	    if (neg) out = (new sjcl.bn(0)).subM(out).normalize();
-	    
-	    for (; out.greaterEquals(that); ci++) {
-	      that.doubleM();
-	    }
-	    
-	    if (neg) out = that.sub(out).normalize();
-	    
-	    for (; ci > 0; ci--) {
-	      that.halveM();
-	      if (out.greaterEquals(that)) {
-	        out.subM(that).normalize();
-	      }
-	    }
-	    return out.trim();
-	  },
-	  
-	  /** return inverse mod prime p.  p must be odd. Binary extended Euclidean algorithm mod p. */
-	  inverseMod: function(p) {
-	    var a = new sjcl.bn(1), b = new sjcl.bn(0), x = new sjcl.bn(this), y = new sjcl.bn(p), tmp, i, nz=1;
-	    
-	    if (!(p.limbs[0] & 1)) {
-	      throw (new sjcl.exception.invalid("inverseMod: p must be odd"));
-	    }
-	    
-	    // invariant: y is odd
-	    do {
-	      if (x.limbs[0] & 1) {
-	        if (!x.greaterEquals(y)) {
-	          // x < y; swap everything
-	          tmp = x; x = y; y = tmp;
-	          tmp = a; a = b; b = tmp;
-	        }
-	        x.subM(y);
-	        x.normalize();
-	        
-	        if (!a.greaterEquals(b)) {
-	          a.addM(p);
-	        }
-	        a.subM(b);
-	      }
-	      
-	      // cut everything in half
-	      x.halveM();
-	      if (a.limbs[0] & 1) {
-	        a.addM(p);
-	      }
-	      a.normalize();
-	      a.halveM();
-	      
-	      // check for termination: x ?= 0
-	      for (i=nz=0; i<x.limbs.length; i++) {
-	        nz |= x.limbs[i];
-	      }
-	    } while(nz);
-	    
-	    if (!y.equals(1)) {
-	      throw (new sjcl.exception.invalid("inverseMod: p and x must be relatively prime"));
-	    }
-	    
-	    return b;
-	  },
-	  
-	  /** this + that.  Does not normalize. */
-	  add: function(that) {
-	    return this.copy().addM(that);
-	  },
-
-	  /** this - that.  Does not normalize. */
-	  sub: function(that) {
-	    return this.copy().subM(that);
-	  },
-	  
-	  /** this * that.  Normalizes and reduces. */
-	  mul: function(that) {
-	    if (typeof(that) === "number") { that = new this._class(that); }
-	    var i, j, a = this.limbs, b = that.limbs, al = a.length, bl = b.length, out = new this._class(), c = out.limbs, ai, ii=this.maxMul;
-
-	    for (i=0; i < this.limbs.length + that.limbs.length + 1; i++) {
-	      c[i] = 0;
-	    }
-	    for (i=0; i<al; i++) {
-	      ai = a[i];
-	      for (j=0; j<bl; j++) {
-	        c[i+j] += ai * b[j];
-	      }
-	     
-	      if (!--ii) {
-	        ii = this.maxMul;
-	        out.cnormalize();
-	      }
-	    }
-	    return out.cnormalize().reduce();
-	  },
-
-	  /** this ^ 2.  Normalizes and reduces. */
-	  square: function() {
-	    return this.mul(this);
-	  },
-
-	  /** this ^ n.  Uses square-and-multiply.  Normalizes and reduces. */
-	  power: function(l) {
-	    if (typeof(l) === "number") {
-	      l = [l];
-	    } else if (l.limbs !== undefined) {
-	      l = l.normalize().limbs;
-	    }
-	    var i, j, out = new this._class(1), pow = this;
-
-	    for (i=0; i<l.length; i++) {
-	      for (j=0; j<this.radix; j++) {
-	        if (l[i] & (1<<j)) {
-	          out = out.mul(pow);
-	        }
-	        pow = pow.square();
-	      }
-	    }
-	    
-	    return out;
-	  },
-
-	  /** this * that mod N */
-	  mulmod: function(that, N) {
-	    return this.mod(N).mul(that.mod(N)).mod(N);
-	  },
-
-	  /** this ^ x mod N */
-	  powermod: function(x, N) {
-	    var result = new sjcl.bn(1), a = new sjcl.bn(this), k = new sjcl.bn(x);
-	    while (true) {
-	      if (k.limbs[0] & 1) { result = result.mulmod(a, N); }
-	      k.halveM();
-	      if (k.equals(0)) { break; }
-	      a = a.mulmod(a, N);
-	    }
-	    return result.normalize().reduce();
-	  },
-
-	  trim: function() {
-	    var l = this.limbs, p;
-	    do {
-	      p = l.pop();
-	    } while (l.length && p === 0);
-	    l.push(p);
-	    return this;
-	  },
-	  
-	  /** Reduce mod a modulus.  Stubbed for subclassing. */
-	  reduce: function() {
-	    return this;
-	  },
-
-	  /** Reduce and normalize. */
-	  fullReduce: function() {
-	    return this.normalize();
-	  },
-	  
-	  /** Propagate carries. */
-	  normalize: function() {
-	    var carry=0, i, pv = this.placeVal, ipv = this.ipv, l, m, limbs = this.limbs, ll = limbs.length, mask = this.radixMask;
-	    for (i=0; i < ll || (carry !== 0 && carry !== -1); i++) {
-	      l = (limbs[i]||0) + carry;
-	      m = limbs[i] = l & mask;
-	      carry = (l-m)*ipv;
-	    }
-	    if (carry === -1) {
-	      limbs[i-1] -= this.placeVal;
-	    }
-	    return this;
-	  },
-
-	  /** Constant-time normalize. Does not allocate additional space. */
-	  cnormalize: function() {
-	    var carry=0, i, ipv = this.ipv, l, m, limbs = this.limbs, ll = limbs.length, mask = this.radixMask;
-	    for (i=0; i < ll-1; i++) {
-	      l = limbs[i] + carry;
-	      m = limbs[i] = l & mask;
-	      carry = (l-m)*ipv;
-	    }
-	    limbs[i] += carry;
-	    return this;
-	  },
-	  
-	  /** Serialize to a bit array */
-	  toBits: function(len) {
-	    this.fullReduce();
-	    len = len || this.exponent || this.bitLength();
-	    var i = Math.floor((len-1)/24), w=sjcl.bitArray, e = (len + 7 & -8) % this.radix || this.radix,
-	        out = [w.partial(e, this.getLimb(i))];
-	    for (i--; i >= 0; i--) {
-	      out = w.concat(out, [w.partial(Math.min(this.radix,len), this.getLimb(i))]);
-	      len -= this.radix;
-	    }
-	    return out;
-	  },
-	  
-	  /** Return the length in bits, rounded up to the nearest byte. */
-	  bitLength: function() {
-	    this.fullReduce();
-	    var out = this.radix * (this.limbs.length - 1),
-	        b = this.limbs[this.limbs.length - 1];
-	    for (; b; b >>>= 1) {
-	      out ++;
-	    }
-	    return out+7 & -8;
-	  }
-	};
-
-	/** @this { sjcl.bn } */
-	sjcl.bn.fromBits = function(bits) {
-	  var Class = this, out = new Class(), words=[], w=sjcl.bitArray, t = this.prototype,
-	      l = Math.min(this.bitLength || 0x100000000, w.bitLength(bits)), e = l % t.radix || t.radix;
-	  
-	  words[0] = w.extract(bits, 0, e);
-	  for (; e < l; e += t.radix) {
-	    words.unshift(w.extract(bits, e, t.radix));
-	  }
-
-	  out.limbs = words;
-	  return out;
-	};
-
-
-
-	sjcl.bn.prototype.ipv = 1 / (sjcl.bn.prototype.placeVal = Math.pow(2,sjcl.bn.prototype.radix));
-	sjcl.bn.prototype.radixMask = (1 << sjcl.bn.prototype.radix) - 1;
-
-	/**
-	 * Creates a new subclass of bn, based on reduction modulo a pseudo-Mersenne prime,
-	 * i.e. a prime of the form 2^e + sum(a * 2^b),where the sum is negative and sparse.
-	 */
-	sjcl.bn.pseudoMersennePrime = function(exponent, coeff) {
-	  /** @constructor */
-	  function p(it) {
-	    this.initWith(it);
-	    /*if (this.limbs[this.modOffset]) {
-	      this.reduce();
-	    }*/
-	  }
-
-	  var ppr = p.prototype = new sjcl.bn(), i, tmp, mo;
-	  mo = ppr.modOffset = Math.ceil(tmp = exponent / ppr.radix);
-	  ppr.exponent = exponent;
-	  ppr.offset = [];
-	  ppr.factor = [];
-	  ppr.minOffset = mo;
-	  ppr.fullMask = 0;
-	  ppr.fullOffset = [];
-	  ppr.fullFactor = [];
-	  ppr.modulus = p.modulus = new sjcl.bn(Math.pow(2,exponent));
-	  
-	  ppr.fullMask = 0|-Math.pow(2, exponent % ppr.radix);
-
-	  for (i=0; i<coeff.length; i++) {
-	    ppr.offset[i] = Math.floor(coeff[i][0] / ppr.radix - tmp);
-	    ppr.fullOffset[i] = Math.ceil(coeff[i][0] / ppr.radix - tmp);
-	    ppr.factor[i] = coeff[i][1] * Math.pow(1/2, exponent - coeff[i][0] + ppr.offset[i] * ppr.radix);
-	    ppr.fullFactor[i] = coeff[i][1] * Math.pow(1/2, exponent - coeff[i][0] + ppr.fullOffset[i] * ppr.radix);
-	    ppr.modulus.addM(new sjcl.bn(Math.pow(2,coeff[i][0])*coeff[i][1]));
-	    ppr.minOffset = Math.min(ppr.minOffset, -ppr.offset[i]); // conservative
-	  }
-	  ppr._class = p;
-	  ppr.modulus.cnormalize();
-
-	  /** Approximate reduction mod p.  May leave a number which is negative or slightly larger than p.
-	   * @this {sjcl.bn}
-	   */
-	  ppr.reduce = function() {
-	    var i, k, l, mo = this.modOffset, limbs = this.limbs, aff, off = this.offset, ol = this.offset.length, fac = this.factor, ll;
-
-	    i = this.minOffset;
-	    while (limbs.length > mo) {
-	      l = limbs.pop();
-	      ll = limbs.length;
-	      for (k=0; k<ol; k++) {
-	        limbs[ll+off[k]] -= fac[k] * l;
-	      }
-	      
-	      i--;
-	      if (!i) {
-	        limbs.push(0);
-	        this.cnormalize();
-	        i = this.minOffset;
-	      }
-	    }
-	    this.cnormalize();
-
-	    return this;
-	  };
-	  
-	  /** @this {sjcl.bn} */
-	  ppr._strongReduce = (ppr.fullMask === -1) ? ppr.reduce : function() {
-	    var limbs = this.limbs, i = limbs.length - 1, k, l;
-	    this.reduce();
-	    if (i === this.modOffset - 1) {
-	      l = limbs[i] & this.fullMask;
-	      limbs[i] -= l;
-	      for (k=0; k<this.fullOffset.length; k++) {
-	        limbs[i+this.fullOffset[k]] -= this.fullFactor[k] * l;
-	      }
-	      this.normalize();
-	    }
-	  };
-
-	  /** mostly constant-time, very expensive full reduction.
-	   * @this {sjcl.bn}
-	   */
-	  ppr.fullReduce = function() {
-	    var greater, i;
-	    // massively above the modulus, may be negative
-	    
-	    this._strongReduce();
-	    // less than twice the modulus, may be negative
-
-	    this.addM(this.modulus);
-	    this.addM(this.modulus);
-	    this.normalize();
-	    // probably 2-3x the modulus
-	    
-	    this._strongReduce();
-	    // less than the power of 2.  still may be more than
-	    // the modulus
-
-	    // HACK: pad out to this length
-	    for (i=this.limbs.length; i<this.modOffset; i++) {
-	      this.limbs[i] = 0;
-	    }
-	    
-	    // constant-time subtract modulus
-	    greater = this.greaterEquals(this.modulus);
-	    for (i=0; i<this.limbs.length; i++) {
-	      this.limbs[i] -= this.modulus.limbs[i] * greater;
-	    }
-	    this.cnormalize();
-
-	    return this;
-	  };
-
-
-	  /** @this {sjcl.bn} */
-	  ppr.inverse = function() {
-	    return (this.power(this.modulus.sub(2)));
-	  };
-
-	  p.fromBits = sjcl.bn.fromBits;
-
-	  return p;
-	};
-
-	// a small Mersenne prime
-	sjcl.bn.prime = {
-	  p127: sjcl.bn.pseudoMersennePrime(127, [[0,-1]]),
-
-	  // Bernstein's prime for Curve25519
-	  p25519: sjcl.bn.pseudoMersennePrime(255, [[0,-19]]),
-
-	  // NIST primes
-	  p192: sjcl.bn.pseudoMersennePrime(192, [[0,-1],[64,-1]]),
-	  p224: sjcl.bn.pseudoMersennePrime(224, [[0,1],[96,-1]]),
-	  p256: sjcl.bn.pseudoMersennePrime(256, [[0,-1],[96,1],[192,1],[224,-1]]),
-	  p384: sjcl.bn.pseudoMersennePrime(384, [[0,-1],[32,1],[96,-1],[128,-1]]),
-	  p521: sjcl.bn.pseudoMersennePrime(521, [[0,-1]])
-	};
-
-	sjcl.bn.random = function(modulus, paranoia) {
-	  if (typeof modulus !== "object") { modulus = new sjcl.bn(modulus); }
-	  var words, i, l = modulus.limbs.length, m = modulus.limbs[l-1]+1, out = new sjcl.bn();
-	  while (true) {
-	    // get a sequence whose first digits make sense
-	    do {
-	      words = sjcl.random.randomWords(l, paranoia);
-	      if (words[l-1] < 0) { words[l-1] += 0x100000000; }
-	    } while (Math.floor(words[l-1] / m) === Math.floor(0x100000000 / m));
-	    words[l-1] %= m;
-
-	    // mask off all the limbs
-	    for (i=0; i<l-1; i++) {
-	      words[i] &= modulus.radixMask;
-	    }
-
-	    // check the rest of the digitssj
-	    out.limbs = words;
-	    if (!out.greaterEquals(modulus)) {
-	      return out;
-	    }
-	  }
-	};
-
-
-	sjcl.ecc = {};
-
-	/**
-	 * Represents a point on a curve in affine coordinates.
-	 * @constructor
-	 * @param {sjcl.ecc.curve} curve The curve that this point lies on.
-	 * @param {bigInt} x The x coordinate.
-	 * @param {bigInt} y The y coordinate.
-	 */
-	sjcl.ecc.point = function(curve,x,y) {
-	  if (x === undefined) {
-	    this.isIdentity = true;
-	  } else {
-	    if (x instanceof sjcl.bn) {
-	      x = new curve.field(x);
-	    }
-	    if (y instanceof sjcl.bn) {
-	      y = new curve.field(y);
-	    }
-
-	    this.x = x;
-	    this.y = y;
-
-	    this.isIdentity = false;
-	  }
-	  this.curve = curve;
-	};
-
-
-
-	sjcl.ecc.point.prototype = {
-	  toJac: function() {
-	    return new sjcl.ecc.pointJac(this.curve, this.x, this.y, new this.curve.field(1));
-	  },
-
-	  mult: function(k) {
-	    return this.toJac().mult(k, this).toAffine();
-	  },
-	  
-	  /**
-	   * Multiply this point by k, added to affine2*k2, and return the answer in Jacobian coordinates.
-	   * @param {bigInt} k The coefficient to multiply this by.
-	   * @param {bigInt} k2 The coefficient to multiply affine2 this by.
-	   * @param {sjcl.ecc.point} affine The other point in affine coordinates.
-	   * @return {sjcl.ecc.pointJac} The result of the multiplication and addition, in Jacobian coordinates.
-	   */
-	  mult2: function(k, k2, affine2) {
-	    return this.toJac().mult2(k, this, k2, affine2).toAffine();
-	  },
-	  
-	  multiples: function() {
-	    var m, i, j;
-	    if (this._multiples === undefined) {
-	      j = this.toJac().doubl();
-	      m = this._multiples = [new sjcl.ecc.point(this.curve), this, j.toAffine()];
-	      for (i=3; i<16; i++) {
-	        j = j.add(this);
-	        m.push(j.toAffine());
-	      }
-	    }
-	    return this._multiples;
-	  },
-
-	  isValid: function() {
-	    return this.y.square().equals(this.curve.b.add(this.x.mul(this.curve.a.add(this.x.square()))));
-	  },
-
-	  toBits: function() {
-	    return sjcl.bitArray.concat(this.x.toBits(), this.y.toBits());
-	  }
-	};
-
-	/**
-	 * Represents a point on a curve in Jacobian coordinates. Coordinates can be specified as bigInts or strings (which
-	 * will be converted to bigInts).
-	 *
-	 * @constructor
-	 * @param {bigInt/string} x The x coordinate.
-	 * @param {bigInt/string} y The y coordinate.
-	 * @param {bigInt/string} z The z coordinate.
-	 * @param {sjcl.ecc.curve} curve The curve that this point lies on.
-	 */
-	sjcl.ecc.pointJac = function(curve, x, y, z) {
-	  if (x === undefined) {
-	    this.isIdentity = true;
-	  } else {
-	    this.x = x;
-	    this.y = y;
-	    this.z = z;
-	    this.isIdentity = false;
-	  }
-	  this.curve = curve;
-	};
-
-	sjcl.ecc.pointJac.prototype = {
-	  /**
-	   * Adds S and T and returns the result in Jacobian coordinates. Note that S must be in Jacobian coordinates and T must be in affine coordinates.
-	   * @param {sjcl.ecc.pointJac} S One of the points to add, in Jacobian coordinates.
-	   * @param {sjcl.ecc.point} T The other point to add, in affine coordinates.
-	   * @return {sjcl.ecc.pointJac} The sum of the two points, in Jacobian coordinates. 
-	   */
-	  add: function(T) {
-	    var S = this, sz2, c, d, c2, x1, x2, x, y1, y2, y, z;
-	    if (S.curve !== T.curve) {
-	      throw("sjcl.ecc.add(): Points must be on the same curve to add them!");
-	    }
-
-	    if (S.isIdentity) {
-	      return T.toJac();
-	    } else if (T.isIdentity) {
-	      return S;
-	    }
-
-	    sz2 = S.z.square();
-	    c = T.x.mul(sz2).subM(S.x);
-
-	    if (c.equals(0)) {
-	      if (S.y.equals(T.y.mul(sz2.mul(S.z)))) {
-	        // same point
-	        return S.doubl();
-	      } else {
-	        // inverses
-	        return new sjcl.ecc.pointJac(S.curve);
-	      }
-	    }
-	    
-	    d = T.y.mul(sz2.mul(S.z)).subM(S.y);
-	    c2 = c.square();
-
-	    x1 = d.square();
-	    x2 = c.square().mul(c).addM( S.x.add(S.x).mul(c2) );
-	    x  = x1.subM(x2);
-
-	    y1 = S.x.mul(c2).subM(x).mul(d);
-	    y2 = S.y.mul(c.square().mul(c));
-	    y  = y1.subM(y2);
-
-	    z  = S.z.mul(c);
-
-	    return new sjcl.ecc.pointJac(this.curve,x,y,z);
-	  },
-	  
-	  /**
-	   * doubles this point.
-	   * @return {sjcl.ecc.pointJac} The doubled point.
-	   */
-	  doubl: function() {
-	    if (this.isIdentity) { return this; }
-
-	    var
-	      y2 = this.y.square(),
-	      a  = y2.mul(this.x.mul(4)),
-	      b  = y2.square().mul(8),
-	      z2 = this.z.square(),
-	      c  = this.x.sub(z2).mul(3).mul(this.x.add(z2)),
-	      x  = c.square().subM(a).subM(a),
-	      y  = a.sub(x).mul(c).subM(b),
-	      z  = this.y.add(this.y).mul(this.z);
-	    return new sjcl.ecc.pointJac(this.curve, x, y, z);
-	  },
-
-	  /**
-	   * Returns a copy of this point converted to affine coordinates.
-	   * @return {sjcl.ecc.point} The converted point.
-	   */  
-	  toAffine: function() {
-	    if (this.isIdentity || this.z.equals(0)) {
-	      return new sjcl.ecc.point(this.curve);
-	    }
-	    var zi = this.z.inverse(), zi2 = zi.square();
-	    return new sjcl.ecc.point(this.curve, this.x.mul(zi2).fullReduce(), this.y.mul(zi2.mul(zi)).fullReduce());
-	  },
-	  
-	  /**
-	   * Multiply this point by k and return the answer in Jacobian coordinates.
-	   * @param {bigInt} k The coefficient to multiply by.
-	   * @param {sjcl.ecc.point} affine This point in affine coordinates.
-	   * @return {sjcl.ecc.pointJac} The result of the multiplication, in Jacobian coordinates.
-	   */
-	  mult: function(k, affine) {
-	    if (typeof(k) === "number") {
-	      k = [k];
-	    } else if (k.limbs !== undefined) {
-	      k = k.normalize().limbs;
-	    }
-	    
-	    var i, j, out = new sjcl.ecc.point(this.curve).toJac(), multiples = affine.multiples();
-
-	    for (i=k.length-1; i>=0; i--) {
-	      for (j=sjcl.bn.prototype.radix-4; j>=0; j-=4) {
-	        out = out.doubl().doubl().doubl().doubl().add(multiples[k[i]>>j & 0xF]);
-	      }
-	    }
-	    
-	    return out;
-	  },
-	  
-	  /**
-	   * Multiply this point by k, added to affine2*k2, and return the answer in Jacobian coordinates.
-	   * @param {bigInt} k The coefficient to multiply this by.
-	   * @param {sjcl.ecc.point} affine This point in affine coordinates.
-	   * @param {bigInt} k2 The coefficient to multiply affine2 this by.
-	   * @param {sjcl.ecc.point} affine The other point in affine coordinates.
-	   * @return {sjcl.ecc.pointJac} The result of the multiplication and addition, in Jacobian coordinates.
-	   */
-	  mult2: function(k1, affine, k2, affine2) {
-	    if (typeof(k1) === "number") {
-	      k1 = [k1];
-	    } else if (k1.limbs !== undefined) {
-	      k1 = k1.normalize().limbs;
-	    }
-	    
-	    if (typeof(k2) === "number") {
-	      k2 = [k2];
-	    } else if (k2.limbs !== undefined) {
-	      k2 = k2.normalize().limbs;
-	    }
-	    
-	    var i, j, out = new sjcl.ecc.point(this.curve).toJac(), m1 = affine.multiples(),
-	        m2 = affine2.multiples(), l1, l2;
-
-	    for (i=Math.max(k1.length,k2.length)-1; i>=0; i--) {
-	      l1 = k1[i] | 0;
-	      l2 = k2[i] | 0;
-	      for (j=sjcl.bn.prototype.radix-4; j>=0; j-=4) {
-	        out = out.doubl().doubl().doubl().doubl().add(m1[l1>>j & 0xF]).add(m2[l2>>j & 0xF]);
-	      }
-	    }
-	    
-	    return out;
-	  },
-
-	  isValid: function() {
-	    var z2 = this.z.square(), z4 = z2.square(), z6 = z4.mul(z2);
-	    return this.y.square().equals(
-	             this.curve.b.mul(z6).add(this.x.mul(
-	               this.curve.a.mul(z4).add(this.x.square()))));
-	  }
-	};
-
-	/**
-	 * Construct an elliptic curve. Most users will not use this and instead start with one of the NIST curves defined below.
-	 *
-	 * @constructor
-	 * @param {bigInt} p The prime modulus.
-	 * @param {bigInt} r The prime order of the curve.
-	 * @param {bigInt} a The constant a in the equation of the curve y^2 = x^3 + ax + b (for NIST curves, a is always -3).
-	 * @param {bigInt} x The x coordinate of a base point of the curve.
-	 * @param {bigInt} y The y coordinate of a base point of the curve.
-	 */
-	sjcl.ecc.curve = function(Field, r, a, b, x, y) {
-	  this.field = Field;
-	  this.r = Field.prototype.modulus.sub(r);
-	  this.a = new Field(a);
-	  this.b = new Field(b);
-	  this.G = new sjcl.ecc.point(this, new Field(x), new Field(y));
-	};
-
-	sjcl.ecc.curve.prototype.fromBits = function (bits) {
-	  var w = sjcl.bitArray, l = this.field.prototype.exponent + 7 & -8,
-	      p = new sjcl.ecc.point(this, this.field.fromBits(w.bitSlice(bits, 0, l)),
-	                             this.field.fromBits(w.bitSlice(bits, l, 2*l)));
-	  if (!p.isValid()) {
-	    throw new sjcl.exception.corrupt("not on the curve!");
-	  }
-	  return p;
-	};
-
-	sjcl.ecc.curves = {
-	  c192: new sjcl.ecc.curve(
-	    sjcl.bn.prime.p192,
-	    "0x662107c8eb94364e4b2dd7ce",
-	    -3,
-	    "0x64210519e59c80e70fa7e9ab72243049feb8deecc146b9b1",
-	    "0x188da80eb03090f67cbf20eb43a18800f4ff0afd82ff1012",
-	    "0x07192b95ffc8da78631011ed6b24cdd573f977a11e794811"),
-
-	  c224: new sjcl.ecc.curve(
-	    sjcl.bn.prime.p224,
-	    "0xe95c1f470fc1ec22d6baa3a3d5c4",
-	    -3,
-	    "0xb4050a850c04b3abf54132565044b0b7d7bfd8ba270b39432355ffb4",
-	    "0xb70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21",
-	    "0xbd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34"),
-
-	  c256: new sjcl.ecc.curve(
-	    sjcl.bn.prime.p256,
-	    "0x4319055358e8617b0c46353d039cdaae",
-	    -3,
-	    "0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b",
-	    "0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
-	    "0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"),
-
-	  c384: new sjcl.ecc.curve(
-	    sjcl.bn.prime.p384,
-	    "0x389cb27e0bc8d21fa7e5f24cb74f58851313e696333ad68c",
-	    -3,
-	    "0xb3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef",
-	    "0xaa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7",
-	    "0x3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f")
-	};
-
-
-	/* Diffie-Hellman-like public-key system */
-	sjcl.ecc._dh = function(cn) {
-	  sjcl.ecc[cn] = {
-	    /** @constructor */
-	    publicKey: function(curve, point) {
-	      this._curve = curve;
-	      this._curveBitLength = curve.r.bitLength();
-	      if (point instanceof Array) {
-	        this._point = curve.fromBits(point);
-	      } else {
-	        this._point = point;
-	      }
-
-	      this.get = function() {
-	        var pointbits = this._point.toBits();
-	        var len = sjcl.bitArray.bitLength(pointbits);
-	        var x = sjcl.bitArray.bitSlice(pointbits, 0, len/2);
-	        var y = sjcl.bitArray.bitSlice(pointbits, len/2);
-	        return { x: x, y: y };
-	      }
-	    },
-
-	    /** @constructor */
-	    secretKey: function(curve, exponent) {
-	      this._curve = curve;
-	      this._curveBitLength = curve.r.bitLength();
-	      this._exponent = exponent;
-
-	      this.get = function() {
-	        return this._exponent.toBits();
-	      }
-	    },
-
-	    /** @constructor */
-	    generateKeys: function(curve, paranoia, sec) {
-	      if (curve === undefined) {
-	        curve = 256;
-	      }
-	      if (typeof curve === "number") {
-	        curve = sjcl.ecc.curves['c'+curve];
-	        if (curve === undefined) {
-	          throw new sjcl.exception.invalid("no such curve");
-	        }
-	      }
-	      if (sec === undefined) {
-	        var sec = sjcl.bn.random(curve.r, paranoia);
-	      }
-	      var pub = curve.G.mult(sec);
-	      return { pub: new sjcl.ecc[cn].publicKey(curve, pub),
-	               sec: new sjcl.ecc[cn].secretKey(curve, sec) };
-	    }
-	  }; 
-	};
-
-	sjcl.ecc._dh("elGamal");
-
-	sjcl.ecc.elGamal.publicKey.prototype = {
-	  kem: function(paranoia) {
-	    var sec = sjcl.bn.random(this._curve.r, paranoia),
-	        tag = this._curve.G.mult(sec).toBits(),
-	        key = sjcl.hash.sha256.hash(this._point.mult(sec).toBits());
-	    return { key: key, tag: tag };
-	  }
-	};
-
-	sjcl.ecc.elGamal.secretKey.prototype = {
-	  unkem: function(tag) {
-	    return sjcl.hash.sha256.hash(this._curve.fromBits(tag).mult(this._exponent).toBits());
-	  },
-
-	  dh: function(pk) {
-	    return sjcl.hash.sha256.hash(pk._point.mult(this._exponent).toBits());
-	  }
-	};
-
-	sjcl.ecc._dh("ecdsa");
-
-	sjcl.ecc.ecdsa.secretKey.prototype = {
-	  sign: function(hash, paranoia, fakeLegacyVersion, fixedKForTesting) {
-	    if (sjcl.bitArray.bitLength(hash) > this._curveBitLength) {
-	      hash = sjcl.bitArray.clamp(hash, this._curveBitLength);
-	    }
-	    var R  = this._curve.r,
-	        l  = R.bitLength(),
-	        k  = fixedKForTesting || sjcl.bn.random(R.sub(1), paranoia).add(1),
-	        r  = this._curve.G.mult(k).x.mod(R),
-	        ss = sjcl.bn.fromBits(hash).add(r.mul(this._exponent)),
-	        s  = fakeLegacyVersion ? ss.inverseMod(R).mul(k).mod(R)
-	             : ss.mul(k.inverseMod(R)).mod(R);
-	    return sjcl.bitArray.concat(r.toBits(l), s.toBits(l));
-	  }
-	};
-
-	sjcl.ecc.ecdsa.publicKey.prototype = {
-	  verify: function(hash, rs, fakeLegacyVersion) {
-	    if (sjcl.bitArray.bitLength(hash) > this._curveBitLength) {
-	      hash = sjcl.bitArray.clamp(hash, this._curveBitLength);
-	    }
-	    var w = sjcl.bitArray,
-	        R = this._curve.r,
-	        l = this._curveBitLength,
-	        r = sjcl.bn.fromBits(w.bitSlice(rs,0,l)),
-	        ss = sjcl.bn.fromBits(w.bitSlice(rs,l,2*l)),
-	        s = fakeLegacyVersion ? ss : ss.inverseMod(R),
-	        hG = sjcl.bn.fromBits(hash).mul(s).mod(R),
-	        hA = r.mul(s).mod(R),
-	        r2 = this._curve.G.mult2(hG, hA, this._point).x;
-	    if (r.equals(0) || ss.equals(0) || r.greaterEquals(R) || ss.greaterEquals(R) || !r2.equals(r)) {
-	      if (fakeLegacyVersion === undefined) {
-	        return this.verify(hash, rs, true);
-	      } else {
-	        throw (new sjcl.exception.corrupt("signature didn't check out"));
-	      }
-	    }
-	    return true;
-	  }
-	};
-
-	/** @fileOverview Javascript SRP implementation.
-	 *
-	 * This file contains a partial implementation of the SRP (Secure Remote
-	 * Password) password-authenticated key exchange protocol. Given a user
-	 * identity, salt, and SRP group, it generates the SRP verifier that may
-	 * be sent to a remote server to establish and SRP account.
-	 *
-	 * For more information, see http://srp.stanford.edu/.
-	 *
-	 * @author Quinn Slack
-	 */
-
-	/**
-	 * Compute the SRP verifier from the username, password, salt, and group.
-	 * @class SRP
-	 */
-	sjcl.keyexchange.srp = {
-	  /**
-	   * Calculates SRP v, the verifier. 
-	   *   v = g^x mod N [RFC 5054]
-	   * @param {String} I The username.
-	   * @param {String} P The password.
-	   * @param {Object} s A bitArray of the salt.
-	   * @param {Object} group The SRP group. Use sjcl.keyexchange.srp.knownGroup
-	                           to obtain this object.
-	   * @return {Object} A bitArray of SRP v.
-	   */
-	  makeVerifier: function(I, P, s, group) {
-	    var x;
-	    x = sjcl.keyexchange.srp.makeX(I, P, s);
-	    x = sjcl.bn.fromBits(x);
-	    return group.g.powermod(x, group.N);
-	  },
-
-	  /**
-	   * Calculates SRP x.
-	   *   x = SHA1(<salt> | SHA(<username> | ":" | <raw password>)) [RFC 2945]
-	   * @param {String} I The username.
-	   * @param {String} P The password.
-	   * @param {Object} s A bitArray of the salt.
-	   * @return {Object} A bitArray of SRP x.
-	   */
-	  makeX: function(I, P, s) {
-	    var inner = sjcl.hash.sha1.hash(I + ':' + P);
-	    return sjcl.hash.sha1.hash(sjcl.bitArray.concat(s, inner));
-	  },
-
-	  /**
-	   * Returns the known SRP group with the given size (in bits).
-	   * @param {String} i The size of the known SRP group.
-	   * @return {Object} An object with "N" and "g" properties.
-	   */
-	  knownGroup:function(i) {
-	    if (typeof i !== "string") { i = i.toString(); }
-	    if (!sjcl.keyexchange.srp._didInitKnownGroups) { sjcl.keyexchange.srp._initKnownGroups(); }
-	    return sjcl.keyexchange.srp._knownGroups[i];
-	  },
-
-	  /**
-	   * Initializes bignum objects for known group parameters.
-	   * @private
-	   */
-	  _didInitKnownGroups: false,
-	  _initKnownGroups:function() {
-	    var i, size, group;
-	    for (i=0; i < sjcl.keyexchange.srp._knownGroupSizes.length; i++) {
-	      size = sjcl.keyexchange.srp._knownGroupSizes[i].toString();
-	      group = sjcl.keyexchange.srp._knownGroups[size];
-	      group.N = new sjcl.bn(group.N);
-	      group.g = new sjcl.bn(group.g);
-	    }
-	    sjcl.keyexchange.srp._didInitKnownGroups = true;
-	  },
-
-	  _knownGroupSizes: [1024, 1536, 2048],
-	  _knownGroups: {
-	    1024: {
-	      N: "EEAF0AB9ADB38DD69C33F80AFA8FC5E86072618775FF3C0B9EA2314C" +
-	         "9C256576D674DF7496EA81D3383B4813D692C6E0E0D5D8E250B98BE4" +
-	         "8E495C1D6089DAD15DC7D7B46154D6B6CE8EF4AD69B15D4982559B29" +
-	         "7BCF1885C529F566660E57EC68EDBC3C05726CC02FD4CBF4976EAA9A" +
-	         "FD5138FE8376435B9FC61D2FC0EB06E3",
-	      g:2
-	    },
-
-	    1536: {
-	      N: "9DEF3CAFB939277AB1F12A8617A47BBBDBA51DF499AC4C80BEEEA961" +
-	         "4B19CC4D5F4F5F556E27CBDE51C6A94BE4607A291558903BA0D0F843" +
-	         "80B655BB9A22E8DCDF028A7CEC67F0D08134B1C8B97989149B609E0B" +
-	         "E3BAB63D47548381DBC5B1FC764E3F4B53DD9DA1158BFD3E2B9C8CF5" +
-	         "6EDF019539349627DB2FD53D24B7C48665772E437D6C7F8CE442734A" +
-	         "F7CCB7AE837C264AE3A9BEB87F8A2FE9B8B5292E5A021FFF5E91479E" +
-	         "8CE7A28C2442C6F315180F93499A234DCF76E3FED135F9BB",
-	      g: 2
-	    },
-
-	    2048: {
-	      N: "AC6BDB41324A9A9BF166DE5E1389582FAF72B6651987EE07FC319294" +
-	         "3DB56050A37329CBB4A099ED8193E0757767A13DD52312AB4B03310D" +
-	         "CD7F48A9DA04FD50E8083969EDB767B0CF6095179A163AB3661A05FB" +
-	         "D5FAAAE82918A9962F0B93B855F97993EC975EEAA80D740ADBF4FF74" +
-	         "7359D041D5C33EA71D281E446B14773BCA97B43A23FB801676BD207A" +
-	         "436C6481F1D2B9078717461A5B9D32E688F87748544523B524B0D57D" +
-	         "5EA77A2775D2ECFA032CFBDBF52FB3786160279004E57AE6AF874E73" +
-	         "03CE53299CCC041C7BC308D82A5698F3A8D0C38271AE35F8E9DBFBB6" +
-	         "94B5C803D89F7AE435DE236D525F54759B65E372FCD68EF20FA7111F" +
-	         "9E4AFF73",
-	      g: 2
-	    }
-	  }
-
-	};
-
-
-	/**
-	 *  Check that the point is valid based on the method described in
-	 *  SEC 1: Elliptic Curve Cryptography, section 3.2.2.1: 
-	 *  Elliptic Curve Public Key Validation Primitive
-	 *  http://www.secg.org/download/aid-780/sec1-v2.pdf
-	 *
-	 *  @returns {Boolean}
-	 */
-	sjcl.ecc.point.prototype.isValidPoint = function() {
-
-	  var self = this;
-
-	  var field_modulus = self.curve.field.modulus;
-
-	  if (self.isIdentity) {
-	    return false;
-	  }
-
-	  // Check that coordinatres are in bounds
-	  // Return false if x < 1 or x > (field_modulus - 1)
-	  if (((new sjcl.bn(1).greaterEquals(self.x)) &&
-	    !self.x.equals(1)) ||
-	    (self.x.greaterEquals(field_modulus.sub(1))) &&
-	    !self.x.equals(1)) {
-
-	    return false;
-	  }
-
-	  // Return false if y < 1 or y > (field_modulus - 1)
-	  if (((new sjcl.bn(1).greaterEquals(self.y)) &&
-	    !self.y.equals(1)) ||
-	    (self.y.greaterEquals(field_modulus.sub(1))) &&
-	    !self.y.equals(1)) {
-
-	    return false;
-	  }
-
-	  if (!self.isOnCurve()) {
-	    return false;
-	  }
-
-	  // TODO check to make sure point is a scalar multiple of base_point
-
-	  return true;
-
-	};
-
-	/**
-	 *  Check that the point is on the curve
-	 *
-	 *  @returns {Boolean}
-	 */
-	sjcl.ecc.point.prototype.isOnCurve = function() {
-
-	  var self = this;
-
-	  var field_order = self.curve.r;
-	  var component_a = self.curve.a;
-	  var component_b = self.curve.b;
-	  var field_modulus = self.curve.field.modulus;
-
-	  var left_hand_side = self.y.mul(self.y).mod(field_modulus);
-	  var right_hand_side = self.x.mul(self.x).mul(self.x).add(component_a.mul(self.x)).add(component_b).mod(field_modulus);
-
-	  return left_hand_side.equals(right_hand_side);
-
-	};
-
-
-	sjcl.ecc.point.prototype.toString = function() {
-	  return '(' + 
-	    this.x.toString() + ', ' +
-	    this.y.toString() +
-	    ')';
-	};
-
-	sjcl.ecc.pointJac.prototype.toString = function() {
-	  return '(' + 
-	    this.x.toString() + ', ' +
-	    this.y.toString() + ', ' +
-	    this.z.toString() +
-	    ')';
-	};
-
-	// ----- for secp256k1 ------
-
-	// Overwrite NIST-P256 with secp256k1
-	sjcl.ecc.curves.c256 = new sjcl.ecc.curve(
-	    sjcl.bn.pseudoMersennePrime(256, [[0,-1],[4,-1],[6,-1],[7,-1],[8,-1],[9,-1],[32,-1]]),
-	    "0x14551231950b75fc4402da1722fc9baee",
-	    0,
-	    7,
-	    "0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-	    "0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
-	);
-
-	// Replace point addition and doubling algorithms
-	// NIST-P256 is a=-3, we need algorithms for a=0
-	sjcl.ecc.pointJac.prototype.add = function(T) {
-	  var S = this;
-	  if (S.curve !== T.curve) {
-	    throw("sjcl.ecc.add(): Points must be on the same curve to add them!");
-	  }
-
-	  if (S.isIdentity) {
-	    return T.toJac();
-	  } else if (T.isIdentity) {
-	    return S;
-	  }
-
-	  var z1z1 = S.z.square();
-	  var h = T.x.mul(z1z1).subM(S.x);
-	  var s2 = T.y.mul(S.z).mul(z1z1);
-
-	  if (h.equals(0)) {
-	    if (S.y.equals(T.y.mul(z1z1.mul(S.z)))) {
-	      // same point
-	      return S.doubl();
-	    } else {
-	      // inverses
-	      return new sjcl.ecc.pointJac(S.curve);
-	    }
-	  }
-
-	  var hh = h.square();
-	  var i = hh.copy().doubleM().doubleM();
-	  var j = h.mul(i);
-	  var r = s2.sub(S.y).doubleM();
-	  var v = S.x.mul(i);
-	  
-	  var x = r.square().subM(j).subM(v.copy().doubleM());
-	  var y = r.mul(v.sub(x)).subM(S.y.mul(j).doubleM());
-	  var z = S.z.add(h).square().subM(z1z1).subM(hh);
-
-	  return new sjcl.ecc.pointJac(this.curve,x,y,z);
-	};
-
-	sjcl.ecc.pointJac.prototype.doubl = function () {
-	  if (this.isIdentity) { return this; }
-
-	  var a = this.x.square();
-	  var b = this.y.square();
-	  var c = b.square();
-	  var d = this.x.add(b).square().subM(a).subM(c).doubleM();
-	  var e = a.mul(3);
-	  var f = e.square();
-	  var x = f.sub(d.copy().doubleM());
-	  var y = e.mul(d.sub(x)).subM(c.doubleM().doubleM().doubleM());
-	  var z = this.z.mul(this.y).doubleM();
-	  return new sjcl.ecc.pointJac(this.curve, x, y, z);
-	};
-
-	sjcl.ecc.point.prototype.toBytesCompressed = function () {
-	  var header = this.y.mod(2).toString() == "0x0" ? 0x02 : 0x03;
-	  return [header].concat(sjcl.codec.bytes.fromBits(this.x.toBits()))
-	};
-
-	/** @fileOverview Javascript RIPEMD-160 implementation.
-	 *
-	 * @author Artem S Vybornov <vybornov@gmail.com>
-	 */
-	(function() {
-
-	/**
-	 * Context for a RIPEMD-160 operation in progress.
-	 * @constructor
-	 * @class RIPEMD, 160 bits.
-	 */
-	sjcl.hash.ripemd160 = function (hash) {
-	    if (hash) {
-	        this._h = hash._h.slice(0);
-	        this._buffer = hash._buffer.slice(0);
-	        this._length = hash._length;
-	    } else {
-	        this.reset();
-	    }
-	};
-
-	/**
-	 * Hash a string or an array of words.
-	 * @static
-	 * @param {bitArray|String} data the data to hash.
-	 * @return {bitArray} The hash value, an array of 5 big-endian words.
-	 */
-	sjcl.hash.ripemd160.hash = function (data) {
-	  return (new sjcl.hash.ripemd160()).update(data).finalize();
-	};
-
-	sjcl.hash.ripemd160.prototype = {
-	    /**
-	     * Reset the hash state.
-	     * @return this
-	     */
-	    reset: function () {
-	        this._h = _h0.slice(0);
-	        this._buffer = [];
-	        this._length = 0;
-	        return this;
-	    },
-
-	    /**
-	     * Reset the hash state.
-	     * @param {bitArray|String} data the data to hash.
-	     * @return this
-	     */
-	    update: function (data) {
-	        if ( typeof data === "string" )
-	            data = sjcl.codec.utf8String.toBits(data);
-
-	        var i, b = this._buffer = sjcl.bitArray.concat(this._buffer, data),
-	            ol = this._length,
-	            nl = this._length = ol + sjcl.bitArray.bitLength(data);
-	        for (i = 512+ol & -512; i <= nl; i+= 512) {
-	            var words = b.splice(0,16);
-	            for ( var w = 0; w < 16; ++w )
-	                words[w] = _cvt(words[w]);
-
-	            _block.call( this, words );
-	        }
-
-	        return this;
-	    },
-
-	    /**
-	     * Complete hashing and output the hash value.
-	     * @return {bitArray} The hash value, an array of 5 big-endian words.
-	     */
-	    finalize: function () {
-	        var b = sjcl.bitArray.concat( this._buffer, [ sjcl.bitArray.partial(1,1) ] ),
-	            l = ( this._length + 1 ) % 512,
-	            z = ( l > 448 ? 512 : 448 ) - l % 448,
-	            zp = z % 32;
-
-	        if ( zp > 0 )
-	            b = sjcl.bitArray.concat( b, [ sjcl.bitArray.partial(zp,0) ] )
-	        for ( ; z >= 32; z -= 32 )
-	            b.push(0);
-
-	        b.push( _cvt( this._length | 0 ) );
-	        b.push( _cvt( Math.floor(this._length / 0x100000000) ) );
-
-	        while ( b.length ) {
-	            var words = b.splice(0,16);
-	            for ( var w = 0; w < 16; ++w )
-	                words[w] = _cvt(words[w]);
-
-	            _block.call( this, words );
-	        }
-
-	        var h = this._h;
-	        this.reset();
-
-	        for ( var w = 0; w < 5; ++w )
-	            h[w] = _cvt(h[w]);
-
-	        return h;
-	    }
-	};
-
-	var _h0 = [ 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0 ];
-
-	var _k1 = [ 0x00000000, 0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xa953fd4e ];
-	var _k2 = [ 0x50a28be6, 0x5c4dd124, 0x6d703ef3, 0x7a6d76e9, 0x00000000 ];
-	for ( var i = 4; i >= 0; --i ) {
-	    for ( var j = 1; j < 16; ++j ) {
-	        _k1.splice(i,0,_k1[i]);
-	        _k2.splice(i,0,_k2[i]);
-	    }
-	}
-
-	var _r1 = [  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
-	             7,  4, 13,  1, 10,  6, 15,  3, 12,  0,  9,  5,  2, 14, 11,  8,
-	             3, 10, 14,  4,  9, 15,  8,  1,  2,  7,  0,  6, 13, 11,  5, 12,
-	             1,  9, 11, 10,  0,  8, 12,  4, 13,  3,  7, 15, 14,  5,  6,  2,
-	             4,  0,  5,  9,  7, 12,  2, 10, 14,  1,  3,  8, 11,  6, 15, 13 ];
-	var _r2 = [  5, 14,  7,  0,  9,  2, 11,  4, 13,  6, 15,  8,  1, 10,  3, 12,
-	             6, 11,  3,  7,  0, 13,  5, 10, 14, 15,  8, 12,  4,  9,  1,  2,
-	            15,  5,  1,  3,  7, 14,  6,  9, 11,  8, 12,  2, 10,  0,  4, 13,
-	             8,  6,  4,  1,  3, 11, 15,  0,  5, 12,  2, 13,  9,  7, 10, 14,
-	            12, 15, 10,  4,  1,  5,  8,  7,  6,  2, 13, 14,  0,  3,  9, 11 ];
-
-	var _s1 = [ 11, 14, 15, 12,  5,  8,  7,  9, 11, 13, 14, 15,  6,  7,  9,  8,
-	             7,  6,  8, 13, 11,  9,  7, 15,  7, 12, 15,  9, 11,  7, 13, 12,
-	            11, 13,  6,  7, 14,  9, 13, 15, 14,  8, 13,  6,  5, 12,  7,  5,
-	            11, 12, 14, 15, 14, 15,  9,  8,  9, 14,  5,  6,  8,  6,  5, 12,
-	             9, 15,  5, 11,  6,  8, 13, 12,  5, 12, 13, 14, 11,  8,  5,  6 ];
-	var _s2 = [  8,  9,  9, 11, 13, 15, 15,  5,  7,  7,  8, 11, 14, 14, 12,  6,
-	             9, 13, 15,  7, 12,  8,  9, 11,  7,  7, 12,  7,  6, 15, 13, 11,
-	             9,  7, 15, 11,  8,  6,  6, 14, 12, 13,  5, 14, 13, 13,  7,  5,
-	            15,  5,  8, 11, 14, 14,  6, 14,  6,  9, 12,  9, 12,  5, 15,  8,
-	             8,  5, 12,  9, 12,  5, 14,  6,  8, 13,  6,  5, 15, 13, 11, 11 ];
-
-	function _f0(x,y,z) {
-	    return x ^ y ^ z;
-	};
-
-	function _f1(x,y,z) {
-	    return (x & y) | (~x & z);
-	};
-
-	function _f2(x,y,z) {
-	    return (x | ~y) ^ z;
-	};
-
-	function _f3(x,y,z) {
-	    return (x & z) | (y & ~z);
-	};
-
-	function _f4(x,y,z) {
-	    return x ^ (y | ~z);
-	};
-
-	function _rol(n,l) {
-	    return (n << l) | (n >>> (32-l));
-	}
-
-	function _cvt(n) {
-	    return ( (n & 0xff <<  0) <<  24 )
-	         | ( (n & 0xff <<  8) <<   8 )
-	         | ( (n & 0xff << 16) >>>  8 )
-	         | ( (n & 0xff << 24) >>> 24 );
-	}
-
-	function _block(X) {
-	    var A1 = this._h[0], B1 = this._h[1], C1 = this._h[2], D1 = this._h[3], E1 = this._h[4],
-	        A2 = this._h[0], B2 = this._h[1], C2 = this._h[2], D2 = this._h[3], E2 = this._h[4];
-
-	    var j = 0, T;
-
-	    for ( ; j < 16; ++j ) {
-	        T = _rol( A1 + _f0(B1,C1,D1) + X[_r1[j]] + _k1[j], _s1[j] ) + E1;
-	        A1 = E1; E1 = D1; D1 = _rol(C1,10); C1 = B1; B1 = T;
-	        T = _rol( A2 + _f4(B2,C2,D2) + X[_r2[j]] + _k2[j], _s2[j] ) + E2;
-	        A2 = E2; E2 = D2; D2 = _rol(C2,10); C2 = B2; B2 = T; }
-	    for ( ; j < 32; ++j ) {
-	        T = _rol( A1 + _f1(B1,C1,D1) + X[_r1[j]] + _k1[j], _s1[j] ) + E1;
-	        A1 = E1; E1 = D1; D1 = _rol(C1,10); C1 = B1; B1 = T;
-	        T = _rol( A2 + _f3(B2,C2,D2) + X[_r2[j]] + _k2[j], _s2[j] ) + E2;
-	        A2 = E2; E2 = D2; D2 = _rol(C2,10); C2 = B2; B2 = T; }
-	    for ( ; j < 48; ++j ) {
-	        T = _rol( A1 + _f2(B1,C1,D1) + X[_r1[j]] + _k1[j], _s1[j] ) + E1;
-	        A1 = E1; E1 = D1; D1 = _rol(C1,10); C1 = B1; B1 = T;
-	        T = _rol( A2 + _f2(B2,C2,D2) + X[_r2[j]] + _k2[j], _s2[j] ) + E2;
-	        A2 = E2; E2 = D2; D2 = _rol(C2,10); C2 = B2; B2 = T; }
-	    for ( ; j < 64; ++j ) {
-	        T = _rol( A1 + _f3(B1,C1,D1) + X[_r1[j]] + _k1[j], _s1[j] ) + E1;
-	        A1 = E1; E1 = D1; D1 = _rol(C1,10); C1 = B1; B1 = T;
-	        T = _rol( A2 + _f1(B2,C2,D2) + X[_r2[j]] + _k2[j], _s2[j] ) + E2;
-	        A2 = E2; E2 = D2; D2 = _rol(C2,10); C2 = B2; B2 = T; }
-	    for ( ; j < 80; ++j ) {
-	        T = _rol( A1 + _f4(B1,C1,D1) + X[_r1[j]] + _k1[j], _s1[j] ) + E1;
-	        A1 = E1; E1 = D1; D1 = _rol(C1,10); C1 = B1; B1 = T;
-	        T = _rol( A2 + _f0(B2,C2,D2) + X[_r2[j]] + _k2[j], _s2[j] ) + E2;
-	        A2 = E2; E2 = D2; D2 = _rol(C2,10); C2 = B2; B2 = T; }
-
-	    T = this._h[1] + C1 + D2;
-	    this._h[1] = this._h[2] + D1 + E2;
-	    this._h[2] = this._h[3] + E1 + A2;
-	    this._h[3] = this._h[4] + A1 + B2;
-	    this._h[4] = this._h[0] + B1 + C2;
-	    this._h[0] = T;
-	}
-
-	})();
-
-	sjcl.bn.ZERO = new sjcl.bn(0);
-
-	/** [ this / that , this % that ] */
-	sjcl.bn.prototype.divRem = function (that) {
-	  if (typeof(that) !== "object") { that = new this._class(that); }
-	  var thisa = this.abs(), thata = that.abs(), quot = new this._class(0),
-	      ci = 0;
-	  if (!thisa.greaterEquals(thata)) {
-	    return [new sjcl.bn(0), this.copy()];
-	  } else if (thisa.equals(thata)) {
-	    return [new sjcl.bn(1), new sjcl.bn(0)];
-	  }
-
-	  for (; thisa.greaterEquals(thata); ci++) {
-	    thata.doubleM();
-	  }
-	  for (; ci > 0; ci--) {
-	    quot.doubleM();
-	    thata.halveM();
-	    if (thisa.greaterEquals(thata)) {
-	      quot.addM(1);
-	      thisa.subM(that).normalize();
-	    }
-	  }
-	  return [quot, thisa];
-	};
-
-	/** this /= that (rounded to nearest int) */
-	sjcl.bn.prototype.divRound = function (that) {
-	  var dr = this.divRem(that), quot = dr[0], rem = dr[1];
-
-	  if (rem.doubleM().greaterEquals(that)) {
-	    quot.addM(1);
-	  }
-
-	  return quot;
-	};
-
-	/** this /= that (rounded down) */
-	sjcl.bn.prototype.div = function (that) {
-	  var dr = this.divRem(that);
-	  return dr[0];
-	};
-
-	sjcl.bn.prototype.sign = function () {
-	  return this.greaterEquals(sjcl.bn.ZERO) ? 1 : -1;
-	};
-
-	/** -this */
-	sjcl.bn.prototype.neg = function () {
-	  return sjcl.bn.ZERO.sub(this);
-	};
-
-	/** |this| */
-	sjcl.bn.prototype.abs = function () {
-	  if (this.sign() === -1) {
-	    return this.neg();
-	  } else return this;
-	};
-
-	/** this >> that */
-	sjcl.bn.prototype.shiftRight = function (that) {
-	  if ("number" !== typeof that) {
-	    throw new Error("shiftRight expects a number");
-	  }
-
-	  that = +that;
-
-	  if (that < 0) {
-	    return this.shiftLeft(that);
-	  }
-
-	  var a = new sjcl.bn(this);
-
-	  while (that >= this.radix) {
-	    a.limbs.shift();
-	    that -= this.radix;
-	  }
-
-	  while (that--) {
-	    a.halveM();
-	  }
-
-	  return a;
-	};
-
-	/** this >> that */
-	sjcl.bn.prototype.shiftLeft = function (that) {
-	  if ("number" !== typeof that) {
-	    throw new Error("shiftLeft expects a number");
-	  }
-
-	  that = +that;
-
-	  if (that < 0) {
-	    return this.shiftRight(that);
-	  }
-
-	  var a = new sjcl.bn(this);
-
-	  while (that >= this.radix) {
-	    a.limbs.unshift(0);
-	    that -= this.radix;
-	  }
-
-	  while (that--) {
-	    a.doubleM();
-	  }
-
-	  return a;
-	};
-
-	/** (int)this */
-	// NOTE Truncates to 32-bit integer
-	sjcl.bn.prototype.toNumber = function () {
-	  return this.limbs[0] | 0;
-	};
-
-	/** find n-th bit, 0 = LSB */
-	sjcl.bn.prototype.testBit = function (bitIndex) {
-	  var limbIndex = Math.floor(bitIndex / this.radix);
-	  var bitIndexInLimb = bitIndex % this.radix;
-
-	  if (limbIndex >= this.limbs.length) return 0;
-
-	  return (this.limbs[limbIndex] >>> bitIndexInLimb) & 1;
-	};
-
-	/** set n-th bit, 0 = LSB */
-	sjcl.bn.prototype.setBitM = function (bitIndex) {
-	  var limbIndex = Math.floor(bitIndex / this.radix);
-	  var bitIndexInLimb = bitIndex % this.radix;
-
-	  while (limbIndex >= this.limbs.length) this.limbs.push(0);
-
-	  this.limbs[limbIndex] |= 1 << bitIndexInLimb;
-
-	  this.cnormalize();
-
-	  return this;
-	};
-
-	sjcl.bn.prototype.modInt = function (n) {
-	  return this.toNumber() % n;
-	};
-
-	sjcl.bn.prototype.invDigit = function ()
-	{
-	  var radixMod = 1 + this.radixMask;
-
-	  if (this.limbs.length < 1) return 0;
-	  var x = this.limbs[0];
-	  if ((x&1) == 0) return 0;
-	  var y = x&3;		// y == 1/x mod 2^2
-	  y = (y*(2-(x&0xf)*y))&0xf;	// y == 1/x mod 2^4
-	  y = (y*(2-(x&0xff)*y))&0xff;	// y == 1/x mod 2^8
-	  y = (y*(2-(((x&0xffff)*y)&0xffff)))&0xffff;	// y == 1/x mod 2^16
-	  // last step - calculate inverse mod DV directly;
-	  // assumes 16 < radixMod <= 32 and assumes ability to handle 48-bit ints
-	  y = (y*(2-x*y%radixMod))%radixMod;		// y == 1/x mod 2^dbits
-	  // we really want the negative inverse, and -DV < y < DV
-	  return (y>0)?radixMod-y:-y;
-	};
-
-	// returns bit length of the integer x
-	function nbits(x) {
-	  var r = 1, t;
-	  if((t=x>>>16) != 0) { x = t; r += 16; }
-	  if((t=x>>8) != 0) { x = t; r += 8; }
-	  if((t=x>>4) != 0) { x = t; r += 4; }
-	  if((t=x>>2) != 0) { x = t; r += 2; }
-	  if((t=x>>1) != 0) { x = t; r += 1; }
-	  return r;
-	}
-
-	// JSBN-style add and multiply for SJCL w/ 24 bit radix
-	sjcl.bn.prototype.am = function (i,x,w,j,c,n) {
-	  var xl = x&0xfff, xh = x>>12;
-	  while (--n >= 0) {
-	    var l = this.limbs[i]&0xfff;
-	    var h = this.limbs[i++]>>12;
-	    var m = xh*l+h*xl;
-	    l = xl*l+((m&0xfff)<<12)+w.limbs[j]+c;
-	    c = (l>>24)+(m>>12)+xh*h;
-	    w.limbs[j++] = l&0xffffff;
-	  }
-	  return c;
-	}
-
-	var Montgomery = function (m)
-	{
-	  this.m = m;
-	  this.mt = m.limbs.length;
-	  this.mt2 = this.mt * 2;
-	  this.mp = m.invDigit();
-	  this.mpl = this.mp&0x7fff;
-	  this.mph = this.mp>>15;
-	  this.um = (1<<(m.radix-15))-1;
-	};
-
-	Montgomery.prototype.reduce = function (x)
-	{
-	  var radixMod = x.radixMask + 1;
-	  while (x.limbs.length <= this.mt2)	// pad x so am has enough room later
-	    x.limbs[x.limbs.length] = 0;
-	  for (var i = 0; i < this.mt; ++i) {
-	    // faster way of calculating u0 = x[i]*mp mod 2^radix
-	    var j = x.limbs[i]&0x7fff;
-	    var u0 = (j*this.mpl+(((j*this.mph+(x.limbs[i]>>15)*this.mpl)&this.um)<<15))&x.radixMask;
-	    // use am to combine the multiply-shift-add into one call
-	    j = i+this.mt;
-	    x.limbs[j] += this.m.am(0,u0,x,i,0,this.mt);
-	    // propagate carry
-	    while (x.limbs[j] >= radixMod) { x.limbs[j] -= radixMod; x.limbs[++j]++; }
-	  }
-	  x.trim();
-	  x = x.shiftRight(this.mt * this.m.radix);
-	  if (x.greaterEquals(this.m)) x = x.sub(this.m);
-	  return x.trim().normalize().reduce();
-	};
-
-	Montgomery.prototype.square = function (x)
-	{
-	  return this.reduce(x.square());
-	};
-
-	Montgomery.prototype.multiply = function (x, y)
-	{
-	  return this.reduce(x.mul(y));
-	};
-
-	Montgomery.prototype.convert = function (x)
-	{
-	  return x.abs().shiftLeft(this.mt * this.m.radix).mod(this.m);
-	};
-
-	Montgomery.prototype.revert = function (x)
-	{
-	  return this.reduce(x.copy());
-	};
-
-	sjcl.bn.prototype.powermodMontgomery = function (e, m)
-	{
-	  var i = e.bitLength(), k, r = new this._class(1);
-
-	  if (i <= 0) return r;
-	  else if (i < 18) k = 1;
-	  else if (i < 48) k = 3;
-	  else if (i < 144) k = 4;
-	  else if (i < 768) k = 5;
-	  else k = 6;
-
-	  if (i < 8 || !m.testBit(0)) {
-	    // For small exponents and even moduli, use a simple square-and-multiply
-	    // algorithm.
-	    return this.powermod(e, m);
-	  }
-
-	  var z = new Montgomery(m);
-
-	  e.trim().normalize();
-
-	  // precomputation
-	  var g = new Array(), n = 3, k1 = k-1, km = (1<<k)-1;
-	  g[1] = z.convert(this);
-	  if (k > 1) {
-	    var g2 = z.square(g[1]);
-
-	    while (n <= km) {
-	      g[n] = z.multiply(g2, g[n-2]);
-	      n += 2;
-	    }
-	  }
-
-	  var j = e.limbs.length-1, w, is1 = true, r2 = new this._class(), t;
-	  i = nbits(e.limbs[j])-1;
-	  while (j >= 0) {
-	    if (i >= k1) w = (e.limbs[j]>>(i-k1))&km;
-	    else {
-	      w = (e.limbs[j]&((1<<(i+1))-1))<<(k1-i);
-	      if (j > 0) w |= e.limbs[j-1]>>(this.radix+i-k1);
-	    }
-
-	    n = k;
-	    while ((w&1) == 0) { w >>= 1; --n; }
-	    if ((i -= n) < 0) { i += this.radix; --j; }
-	    if (is1) {	// ret == 1, don't bother squaring or multiplying it
-	      r = g[w].copy();
-	      is1 = false;
-	    } else {
-	      while (n > 1) { r2 = z.square(r); r = z.square(r2); n -= 2; }
-	      if (n > 0) r2 = z.square(r); else { t = r; r = r2; r2 = t; }
-	      r = z.multiply(r2,g[w]);
-	    }
-
-	    while (j >= 0 && (e.limbs[j]&(1<<i)) == 0) {
-	      r2 = z.square(r); t = r; r = r2; r2 = t;
-	      if (--i < 0) { i = this.radix-1; --j; }
-	    }
-	  }
-	  return z.revert(r);
-	}
-
-	sjcl.ecc.ecdsa.secretKey.prototype.sign = function(hash, paranoia, k_for_testing) {
-	  var R = this._curve.r,
-	      l = R.bitLength();
-
-	  // k_for_testing should ONLY BE SPECIFIED FOR TESTING
-	  // specifying it will make the signature INSECURE
-	  var k;
-	  if (typeof k_for_testing === 'object' && k_for_testing.length > 0 && typeof k_for_testing[0] === 'number') {
-	    k = k_for_testing;
-	  } else if (typeof k_for_testing === 'string' && /^[0-9a-fA-F]+$/.test(k_for_testing)) {
-	    k = sjcl.bn.fromBits(sjcl.codec.hex.toBits(k_for_testing));        
-	  } else {
-	    // This is the only option that should be used in production
-	    k = sjcl.bn.random(R.sub(1), paranoia).add(1);
-	  }
-
-	  var r = this._curve.G.mult(k).x.mod(R);
-	  var s = sjcl.bn.fromBits(hash).add(r.mul(this._exponent)).mul(k.inverseMod(R)).mod(R);
-
-	  return sjcl.bitArray.concat(r.toBits(l), s.toBits(l));
-	};
-
-	sjcl.ecc.ecdsa.publicKey.prototype.verify = function(hash, rs) {
-	  var w = sjcl.bitArray,
-	      R = this._curve.r,
-	      l = R.bitLength(),
-	      r = sjcl.bn.fromBits(w.bitSlice(rs,0,l)),
-	      s = sjcl.bn.fromBits(w.bitSlice(rs,l,2*l)),
-	      sInv = s.inverseMod(R),
-	      hG = sjcl.bn.fromBits(hash).mul(sInv).mod(R),
-	      hA = r.mul(sInv).mod(R),
-	      r2 = this._curve.G.mult2(hG, hA, this._point).x;
-
-	  if (r.equals(0) || s.equals(0) || r.greaterEquals(R) || s.greaterEquals(R) || !r2.equals(r)) {
-	    throw (new sjcl.exception.corrupt("signature didn't check out"));
-	  }
-	  return true;
-	};
-
-	sjcl.ecc.ecdsa.secretKey.prototype.canonicalizeSignature = function(rs) {
-	  var w = sjcl.bitArray,
-	      R = this._curve.r,
-	      l = R.bitLength();
-
-	  var r = sjcl.bn.fromBits(w.bitSlice(rs,0,l)),
-	      s = sjcl.bn.fromBits(w.bitSlice(rs,l,2*l));
-
-	  // For a canonical signature we want the lower of two possible values for s
-	  // 0 < s <= n/2
-	  if (!R.copy().halveM().greaterEquals(s)) {
-	    s = R.sub(s);
-	  }
-
-	  return w.concat(r.toBits(l), s.toBits(l));
-	};
-
-
-	sjcl.ecc.ecdsa.secretKey.prototype.signDER = function(hash, paranoia) {
-	  return this.encodeDER(this.sign(hash, paranoia));
-	};
-
-	sjcl.ecc.ecdsa.secretKey.prototype.encodeDER = function(rs) {
-	  var w = sjcl.bitArray,
-	      R = this._curve.r,
-	      l = R.bitLength();
-
-	  var rb = sjcl.codec.bytes.fromBits(w.bitSlice(rs,0,l)),
-	      sb = sjcl.codec.bytes.fromBits(w.bitSlice(rs,l,2*l));
-
-	  // Drop empty leading bytes
-	  while (!rb[0] && rb.length) rb.shift();
-	  while (!sb[0] && sb.length) sb.shift();
-
-	  // If high bit is set, prepend an extra zero byte (DER signed integer)
-	  if (rb[0] & 0x80) rb.unshift(0);
-	  if (sb[0] & 0x80) sb.unshift(0);
-
-	  var buffer = [].concat(
-	    0x30,
-	    4 + rb.length + sb.length,
-	    0x02,
-	    rb.length,
-	    rb,
-	    0x02,
-	    sb.length,
-	    sb
-	  );
-
-	  return sjcl.codec.bytes.toBits(buffer);
-	};
-
-
-	/**
-	 *  This module uses the public key recovery method
-	 *  described in SEC 1: Elliptic Curve Cryptography,
-	 *  section 4.1.6, "Public Key Recovery Operation".
-	 *  http://www.secg.org/download/aid-780/sec1-v2.pdf
-	 *
-	 *  Implementation based on:
-	 *  https://github.com/bitcoinjs/bitcoinjs-lib/blob/89cf731ac7309b4f98994e3b4b67b7226020181f/src/ecdsa.js
-	 */
-
-	// Defined here so that this value only needs to be calculated once
-	var FIELD_MODULUS_PLUS_ONE_DIVIDED_BY_FOUR;
-
-	/**
-	 *  Sign the given hash such that the public key, prepending an extra byte 
-	 *  so that the public key will be recoverable from the signature
-	 *
-	 *  @param {bitArray} hash
-	 *  @param {Number} paranoia
-	 *  @returns {bitArray} Signature formatted as bitArray
-	 */
-	sjcl.ecc.ecdsa.secretKey.prototype.signWithRecoverablePublicKey = function(hash, paranoia, k_for_testing) {
-
-	  var self = this;
-
-	  // Convert hash to bits and determine encoding for output
-	  var hash_bits;
-	  if (typeof hash === 'object' && hash.length > 0 && typeof hash[0] === 'number') {
-	    hash_bits = hash;
-	  } else {
-	    throw new sjcl.exception.invalid('hash. Must be a bitArray');
-	  }
-
-	  // Sign hash with standard, canonicalized method
-	  var standard_signature = self.sign(hash_bits, paranoia, k_for_testing);
-	  var canonical_signature = self.canonicalizeSignature(standard_signature);
-
-	  // Extract r and s signature components from canonical signature
-	  var r_and_s = getRandSFromSignature(self._curve, canonical_signature);
-
-	  // Rederive public key
-	  var public_key = self._curve.G.mult(sjcl.bn.fromBits(self.get()));
-
-	  // Determine recovery factor based on which possible value
-	  // returns the correct public key
-	  var recovery_factor = calculateRecoveryFactor(self._curve, r_and_s.r, r_and_s.s, hash_bits, public_key);
-
-	  // Prepend recovery_factor to signature and encode in DER
-	  // The value_to_prepend should be 4 bytes total
-	  var value_to_prepend = recovery_factor + 27;
-
-	  var final_signature_bits = sjcl.bitArray.concat([value_to_prepend], canonical_signature);
-
-	  // Return value in bits
-	  return final_signature_bits;
-
-	};
-
-
-	/**
-	 *  Recover the public key from a signature created with the
-	 *  signWithRecoverablePublicKey method in this module
-	 *
-	 *  @static
-	 *
-	 *  @param {bitArray} hash
-	 *  @param {bitArray} signature
-	 *  @param {sjcl.ecc.curve} [sjcl.ecc.curves['c256']] curve
-	 *  @returns {sjcl.ecc.ecdsa.publicKey} Public key
-	 */
-	sjcl.ecc.ecdsa.publicKey.recoverFromSignature = function(hash, signature, curve) {
-
-	  if (!signature || signature instanceof sjcl.ecc.curve) {
-	    throw new sjcl.exception.invalid('must supply hash and signature to recover public key');
-	  }
-
-	  if (!curve) {
-	    curve = sjcl.ecc.curves['c256'];
-	  }
-
-	  // Convert hash to bits and determine encoding for output
-	  var hash_bits;
-	  if (typeof hash === 'object' && hash.length > 0 && typeof hash[0] === 'number') {
-	    hash_bits = hash;
-	  } else {
-	    throw new sjcl.exception.invalid('hash. Must be a bitArray');
-	  }
-
-	  var signature_bits;
-	  if (typeof signature === 'object' && signature.length > 0 && typeof signature[0] === 'number') {
-	    signature_bits = signature;
-	  } else {
-	    throw new sjcl.exception.invalid('signature. Must be a bitArray');
-	  }
-
-	  // Extract recovery_factor from first 4 bytes
-	  var recovery_factor = signature_bits[0] - 27;
-
-	  if (recovery_factor < 0 || recovery_factor > 3) {
-	    throw new sjcl.exception.invalid('signature. Signature must be generated with algorithm ' +
-	      'that prepends the recovery factor in order to recover the public key');
-	  }
-
-	  // Separate r and s values
-	  var r_and_s = getRandSFromSignature(curve, signature_bits.slice(1));
-	  var signature_r = r_and_s.r;
-	  var signature_s = r_and_s.s;
-
-	  // Recover public key using recovery_factor
-	  var recovered_public_key_point = recoverPublicKeyPointFromSignature(curve, signature_r, signature_s, hash_bits, recovery_factor);
-	  var recovered_public_key = new sjcl.ecc.ecdsa.publicKey(curve, recovered_public_key_point);
-
-	  return recovered_public_key;
-
-	};
-
-
-	/**
-	 *  Retrieve the r and s components of a signature  
-	 *
-	 *  @param {sjcl.ecc.curve} curve
-	 *  @param {bitArray} signature
-	 *  @returns {Object} Object with 'r' and 's' fields each as an sjcl.bn
-	 */
-	function getRandSFromSignature(curve, signature) {
-
-	  var r_length = curve.r.bitLength();
-
-	  return {
-	    r: sjcl.bn.fromBits(sjcl.bitArray.bitSlice(signature, 0, r_length)),
-	    s: sjcl.bn.fromBits(sjcl.bitArray.bitSlice(signature, r_length, sjcl.bitArray.bitLength(signature)))
-	  };
-	};
-
-
-	/**
-	 *  Determine the recovery factor by trying all four
-	 *  possibilities and figuring out which results in the
-	 *  correct public key
-	 *
-	 *  @param {sjcl.ecc.curve} curve
-	 *  @param {sjcl.bn} r
-	 *  @param {sjcl.bn} s
-	 *  @param {bitArray} hash_bits
-	 *  @param {sjcl.ecc.point} original_public_key_point
-	 *  @returns {Number, 0-3} Recovery factor
-	 */
-	function calculateRecoveryFactor(curve, r, s, hash_bits, original_public_key_point) {
-
-	  var original_public_key_point_bits = original_public_key_point.toBits();
-
-	  // TODO: verify that it is possible for the recovery_factor to be 2 or 3,
-	  // we may only need 1 bit because the canonical signature might remove the
-	  // possibility of us needing to "use the second candidate key"
-	  for (var possible_factor = 0; possible_factor < 4; possible_factor++) {
-
-	    var resulting_public_key_point;
-	    try {
-	      resulting_public_key_point = recoverPublicKeyPointFromSignature(curve, r, s, hash_bits, possible_factor);
-	    } catch (err) {
-	      // console.log(err, err.stack);
-	      continue;
-	    }
-
-	    if (sjcl.bitArray.equal(resulting_public_key_point.toBits(), original_public_key_point_bits)) {
-	      return possible_factor;
-	    }
-
-	  }
-
-	  throw new sjcl.exception.bug('unable to calculate recovery factor from signature');
-
-	};
-
-
-	/**
-	 *  Recover the public key from the signature.
-	 *
-	 *  @param {sjcl.ecc.curve} curve
-	 *  @param {sjcl.bn} r
-	 *  @param {sjcl.bn} s
-	 *  @param {bitArray} hash_bits
-	 *  @param {Number, 0-3} recovery_factor
-	 *  @returns {sjcl.point} Public key corresponding to signature
-	 */
-	function recoverPublicKeyPointFromSignature(curve, signature_r, signature_s, hash_bits, recovery_factor) {
-
-	  var field_order = curve.r;
-	  var field_modulus = curve.field.modulus;
-
-	  // Reduce the recovery_factor to the two bits used
-	  recovery_factor = recovery_factor & 3;
-
-	  // The less significant bit specifies whether the y coordinate
-	  // of the compressed point is even or not.
-	  var compressed_point_y_coord_is_even = recovery_factor & 1;
-
-	  // The more significant bit specifies whether we should use the
-	  // first or second candidate key.
-	  var use_second_candidate_key = recovery_factor >> 1;
-
-	  // Calculate (field_order + 1) / 4
-	  if (!FIELD_MODULUS_PLUS_ONE_DIVIDED_BY_FOUR) {
-	    FIELD_MODULUS_PLUS_ONE_DIVIDED_BY_FOUR = field_modulus.add(1).div(4);
-	  }
-
-	  // In the paper they write "1. For j from 0 to h do the following..."
-	  // That is not necessary here because we are given the recovery_factor
-	  // step 1.1 Let x = r + jn
-	  // Here "j" is either 0 or 1
-	  var x;
-	  if (use_second_candidate_key) {
-	    x = signature_r.add(field_order);
-	  } else {
-	    x = signature_r;
-	  }
-
-	  // step 1.2 and 1.3  convert x to an elliptic curve point
-	  // Following formula in section 2.3.4 Octet-String-to-Elliptic-Curve-Point Conversion
-	  var alpha = x.mul(x).mul(x).add(curve.a.mul(x)).add(curve.b).mod(field_modulus);
-	  var beta = alpha.powermodMontgomery(FIELD_MODULUS_PLUS_ONE_DIVIDED_BY_FOUR, field_modulus);
-
-	  // If beta is even but y isn't or
-	  // if beta is odd and y is even
-	  // then subtract beta from the field_modulus
-	  var y;
-	  var beta_is_even = beta.mod(2).equals(0);
-	  if (beta_is_even && !compressed_point_y_coord_is_even ||
-	    !beta_is_even && compressed_point_y_coord_is_even) {
-	    y = beta;
-	  } else {
-	    y = field_modulus.sub(beta);
-	  }
-
-	  // generated_point_R is the point generated from x and y
-	  var generated_point_R = new sjcl.ecc.point(curve, x, y);
-
-	  // step 1.4  check that R is valid and R x field_order !== infinity
-	  // TODO: add check for R x field_order === infinity
-	  if (!generated_point_R.isValidPoint()) {
-	    throw new sjcl.exception.corrupt('point R. Not a valid point on the curve. Cannot recover public key');
-	  }
-
-	  // step 1.5  Compute e from M
-	  var message_e = sjcl.bn.fromBits(hash_bits);
-	  var message_e_neg = new sjcl.bn(0).sub(message_e).mod(field_order);
-
-	  // step 1.6  Compute Q = r^-1 (sR - eG)
-	  // console.log('r: ', signature_r);
-	  var signature_r_inv = signature_r.inverseMod(field_order);
-	  var public_key_point = generated_point_R.mult2(signature_s, message_e_neg, curve.G).mult(signature_r_inv);
-
-	  // Validate public key point
-	  if (!public_key_point.isValidPoint()) {
-	    throw new sjcl.exception.corrupt('public_key_point. Not a valid point on the curve. Cannot recover public key');
-	  }
-
-	  // Verify that this public key matches the signature
-	  if (!verify_raw(curve, message_e, signature_r, signature_s, public_key_point)) {
-	    throw new sjcl.exception.corrupt('cannot recover public key');
-	  }
-
-	  return public_key_point;
-
-	};
-
-
-	/**
-	 *  Verify a signature given the raw components
-	 *  using method defined in section 4.1.5:
-	 *  "Alternative Verifying Operation"
-	 *
-	 *  @param {sjcl.ecc.curve} curve
-	 *  @param {sjcl.bn} e
-	 *  @param {sjcl.bn} r
-	 *  @param {sjcl.bn} s
-	 *  @param {sjcl.ecc.point} public_key_point
-	 *  @returns {Boolean} 
-	 */
-	function verify_raw(curve, e, r, s, public_key_point) {
-
-	  var field_order = curve.r;
-
-	  // Return false if r is out of bounds
-	  if ((new sjcl.bn(1)).greaterEquals(r) || r.greaterEquals(new sjcl.bn(field_order))) {
-	    return false;
-	  }
-
-	  // Return false if s is out of bounds
-	  if ((new sjcl.bn(1)).greaterEquals(s) || s.greaterEquals(new sjcl.bn(field_order))) {
-	    return false;
-	  }
-
-	  // Check that r = (u1 + u2)G
-	  // u1 = e x s^-1 (mod field_order)
-	  // u2 = r x s^-1 (mod field_order)
-	  var s_mod_inverse_field_order = s.inverseMod(field_order);
-	  var u1 = e.mul(s_mod_inverse_field_order).mod(field_order);
-	  var u2 = r.mul(s_mod_inverse_field_order).mod(field_order);
-
-	  var point_computed = curve.G.mult2(u1, u2, public_key_point);
-
-	  return r.equals(point_computed.x.mod(field_order));
-
-	};
-
-
-	sjcl.bn.prototype.jacobi = function (that) {
-	  var a = this;
-	  that = new sjcl.bn(that);
-
-	  if (that.sign() === -1) return;
-
-	  // 1. If a = 0 then return(0).
-	  if (a.equals(0)) { return 0; }
-
-	  // 2. If a = 1 then return(1).
-	  if (a.equals(1)) { return 1; }
-
-	  var s = 0;
-
-	  // 3. Write a = 2^e * a1, where a1 is odd.
-	  var e = 0;
-	  while (!a.testBit(e)) e++;
-	  var a1 = a.shiftRight(e);
-
-	  // 4. If e is even then set s ← 1.
-	  if ((e & 1) === 0) {
-	    s = 1;
-	  } else {
-	    var residue = that.modInt(8);
-
-	    if (residue === 1 || residue === 7) {
-	      // Otherwise set s ← 1 if n ≡ 1 or 7 (mod 8)
-	      s = 1;
-	    } else if (residue === 3 || residue === 5) {
-	      // Or set s ← −1 if n ≡ 3 or 5 (mod 8).
-	      s = -1;
-	    }
-	  }
-
-	  // 5. If n ≡ 3 (mod 4) and a1 ≡ 3 (mod 4) then set s ← −s.
-	  if (that.modInt(4) === 3 && a1.modInt(4) === 3) {
-	    s = -s;
-	  }
-
-	  if (a1.equals(1)) {
-	    return s;
-	  } else {
-	    return s * that.mod(a1).jacobi(a1);
-	  }
-	};
-
-
-/***/ },
-/* 34 */
-/***/ function(module, exports, __webpack_require__) {
-
-	// Copyright (c) 2005  Tom Wu
-	// All Rights Reserved.
-	// See "LICENSE" for details.
-
-	// Basic JavaScript BN library - subset useful for RSA encryption.
-
-	// Bits per digit
-	var dbits;
-
-	// JavaScript engine analysis
-	var canary = 0xdeadbeefcafe;
-	var j_lm = ((canary&0xffffff)==0xefcafe);
-
-	// (public) Constructor
-	function BigInteger(a,b,c) {
-	  if(a != null)
-	    if("number" == typeof a) this.fromNumber(a,b,c);
-	    else if(b == null && "string" != typeof a) this.fromString(a,256);
-	    else this.fromString(a,b);
-	}
-
-	// return new, unset BigInteger
-	function nbi() { return new BigInteger(null); }
-
-	// am: Compute w_j += (x*this_i), propagate carries,
-	// c is initial carry, returns final carry.
-	// c < 3*dvalue, x < 2*dvalue, this_i < dvalue
-	// We need to select the fastest one that works in this environment.
-
-	// am1: use a single mult and divide to get the high bits,
-	// max digit bits should be 26 because
-	// max internal value = 2*dvalue^2-2*dvalue (< 2^53)
-	function am1(i,x,w,j,c,n) {
-	  while(--n >= 0) {
-	    var v = x*this[i++]+w[j]+c;
-	    c = Math.floor(v/0x4000000);
-	    w[j++] = v&0x3ffffff;
-	  }
-	  return c;
-	}
-	// am2 avoids a big mult-and-extract completely.
-	// Max digit bits should be <= 30 because we do bitwise ops
-	// on values up to 2*hdvalue^2-hdvalue-1 (< 2^31)
-	function am2(i,x,w,j,c,n) {
-	  var xl = x&0x7fff, xh = x>>15;
-	  while(--n >= 0) {
-	    var l = this[i]&0x7fff;
-	    var h = this[i++]>>15;
-	    var m = xh*l+h*xl;
-	    l = xl*l+((m&0x7fff)<<15)+w[j]+(c&0x3fffffff);
-	    c = (l>>>30)+(m>>>15)+xh*h+(c>>>30);
-	    w[j++] = l&0x3fffffff;
-	  }
-	  return c;
-	}
-	// Alternately, set max digit bits to 28 since some
-	// browsers slow down when dealing with 32-bit numbers.
-	function am3(i,x,w,j,c,n) {
-	  var xl = x&0x3fff, xh = x>>14;
-	  while(--n >= 0) {
-	    var l = this[i]&0x3fff;
-	    var h = this[i++]>>14;
-	    var m = xh*l+h*xl;
-	    l = xl*l+((m&0x3fff)<<14)+w[j]+c;
-	    c = (l>>28)+(m>>14)+xh*h;
-	    w[j++] = l&0xfffffff;
-	  }
-	  return c;
-	}
-	if(j_lm && 'undefined' !== typeof navigator && (navigator.appName == "Microsoft Internet Explorer")) {
-	  BigInteger.prototype.am = am2;
-	  dbits = 30;
-	}
-	else if(j_lm && 'undefined' !== typeof navigator && (navigator.appName != "Netscape")) {
-	  BigInteger.prototype.am = am1;
-	  dbits = 26;
-	}
-	else { // Mozilla/Netscape seems to prefer am3
-	  BigInteger.prototype.am = am3;
-	  dbits = 28;
-	}
-
-	BigInteger.prototype.DB = dbits;
-	BigInteger.prototype.DM = ((1<<dbits)-1);
-	BigInteger.prototype.DV = (1<<dbits);
-
-	var BI_FP = 52;
-	BigInteger.prototype.FV = Math.pow(2,BI_FP);
-	BigInteger.prototype.F1 = BI_FP-dbits;
-	BigInteger.prototype.F2 = 2*dbits-BI_FP;
-
-	// Digit conversions
-	var BI_RM = "0123456789abcdefghijklmnopqrstuvwxyz";
-	var BI_RC = new Array();
-	var rr,vv;
-	rr = "0".charCodeAt(0);
-	for(vv = 0; vv <= 9; ++vv) BI_RC[rr++] = vv;
-	rr = "a".charCodeAt(0);
-	for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
-	rr = "A".charCodeAt(0);
-	for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
-
-	function int2char(n) { return BI_RM.charAt(n); }
-	function intAt(s,i) {
-	  var c = BI_RC[s.charCodeAt(i)];
-	  return (c==null)?-1:c;
-	}
-
-	// (protected) copy this to r
-	function bnpCopyTo(r) {
-	  for(var i = this.t-1; i >= 0; --i) r[i] = this[i];
-	  r.t = this.t;
-	  r.s = this.s;
-	}
-
-	// (protected) set from integer value x, -DV <= x < DV
-	function bnpFromInt(x) {
-	  this.t = 1;
-	  this.s = (x<0)?-1:0;
-	  if(x > 0) this[0] = x;
-	  else if(x < -1) this[0] = x+this.DV;
-	  else this.t = 0;
-	}
-
-	// return bigint initialized to value
-	function nbv(i) { var r = nbi(); r.fromInt(i); return r; }
-
-	// (protected) set from string and radix
-	function bnpFromString(s,b) {
-	  var k;
-	  if(b == 16) k = 4;
-	  else if(b == 8) k = 3;
-	  else if(b == 256) k = 8; // byte array
-	  else if(b == 2) k = 1;
-	  else if(b == 32) k = 5;
-	  else if(b == 4) k = 2;
-	  else { this.fromRadix(s,b); return; }
-	  this.t = 0;
-	  this.s = 0;
-	  var i = s.length, mi = false, sh = 0;
-	  while(--i >= 0) {
-	    var x = (k==8)?s[i]&0xff:intAt(s,i);
-	    if(x < 0) {
-	      if(s.charAt(i) == "-") mi = true;
-	      continue;
-	    }
-	    mi = false;
-	    if(sh == 0)
-	      this[this.t++] = x;
-	    else if(sh+k > this.DB) {
-	      this[this.t-1] |= (x&((1<<(this.DB-sh))-1))<<sh;
-	      this[this.t++] = (x>>(this.DB-sh));
-	    }
-	    else
-	      this[this.t-1] |= x<<sh;
-	    sh += k;
-	    if(sh >= this.DB) sh -= this.DB;
-	  }
-	  if(k == 8 && (s[0]&0x80) != 0) {
-	    this.s = -1;
-	    if(sh > 0) this[this.t-1] |= ((1<<(this.DB-sh))-1)<<sh;
-	  }
-	  this.clamp();
-	  if(mi) BigInteger.ZERO.subTo(this,this);
-	}
-
-	// (protected) clamp off excess high words
-	function bnpClamp() {
-	  var c = this.s&this.DM;
-	  while(this.t > 0 && this[this.t-1] == c) --this.t;
-	}
-
-	// (public) return string representation in given radix
-	function bnToString(b) {
-	  if(this.s < 0) return "-"+this.negate().toString(b);
-	  var k;
-	  if(b == 16) k = 4;
-	  else if(b == 8) k = 3;
-	  else if(b == 2) k = 1;
-	  else if(b == 32) k = 5;
-	  else if(b == 4) k = 2;
-	  else return this.toRadix(b);
-	  var km = (1<<k)-1, d, m = false, r = "", i = this.t;
-	  var p = this.DB-(i*this.DB)%k;
-	  if(i-- > 0) {
-	    if(p < this.DB && (d = this[i]>>p) > 0) { m = true; r = int2char(d); }
-	    while(i >= 0) {
-	      if(p < k) {
-	        d = (this[i]&((1<<p)-1))<<(k-p);
-	        d |= this[--i]>>(p+=this.DB-k);
-	      }
-	      else {
-	        d = (this[i]>>(p-=k))&km;
-	        if(p <= 0) { p += this.DB; --i; }
-	      }
-	      if(d > 0) m = true;
-	      if(m) r += int2char(d);
-	    }
-	  }
-	  return m?r:"0";
-	}
-
-	// (public) -this
-	function bnNegate() { var r = nbi(); BigInteger.ZERO.subTo(this,r); return r; }
-
-	// (public) |this|
-	function bnAbs() { return (this.s<0)?this.negate():this; }
-
-	// (public) return + if this > a, - if this < a, 0 if equal
-	function bnCompareTo(a) {
-	  var r = this.s-a.s;
-	  if(r != 0) return r;
-	  var i = this.t;
-	  r = i-a.t;
-	  if(r != 0) return (this.s<0)?-r:r;
-	  while(--i >= 0) if((r=this[i]-a[i]) != 0) return r;
-	  return 0;
-	}
-
-	// returns bit length of the integer x
-	function nbits(x) {
-	  var r = 1, t;
-	  if((t=x>>>16) != 0) { x = t; r += 16; }
-	  if((t=x>>8) != 0) { x = t; r += 8; }
-	  if((t=x>>4) != 0) { x = t; r += 4; }
-	  if((t=x>>2) != 0) { x = t; r += 2; }
-	  if((t=x>>1) != 0) { x = t; r += 1; }
-	  return r;
-	}
-
-	// (public) return the number of bits in "this"
-	function bnBitLength() {
-	  if(this.t <= 0) return 0;
-	  return this.DB*(this.t-1)+nbits(this[this.t-1]^(this.s&this.DM));
-	}
-
-	// (protected) r = this << n*DB
-	function bnpDLShiftTo(n,r) {
-	  var i;
-	  for(i = this.t-1; i >= 0; --i) r[i+n] = this[i];
-	  for(i = n-1; i >= 0; --i) r[i] = 0;
-	  r.t = this.t+n;
-	  r.s = this.s;
-	}
-
-	// (protected) r = this >> n*DB
-	function bnpDRShiftTo(n,r) {
-	  for(var i = n; i < this.t; ++i) r[i-n] = this[i];
-	  r.t = Math.max(this.t-n,0);
-	  r.s = this.s;
-	}
-
-	// (protected) r = this << n
-	function bnpLShiftTo(n,r) {
-	  var bs = n%this.DB;
-	  var cbs = this.DB-bs;
-	  var bm = (1<<cbs)-1;
-	  var ds = Math.floor(n/this.DB), c = (this.s<<bs)&this.DM, i;
-	  for(i = this.t-1; i >= 0; --i) {
-	    r[i+ds+1] = (this[i]>>cbs)|c;
-	    c = (this[i]&bm)<<bs;
-	  }
-	  for(i = ds-1; i >= 0; --i) r[i] = 0;
-	  r[ds] = c;
-	  r.t = this.t+ds+1;
-	  r.s = this.s;
-	  r.clamp();
-	}
-
-	// (protected) r = this >> n
-	function bnpRShiftTo(n,r) {
-	  r.s = this.s;
-	  var ds = Math.floor(n/this.DB);
-	  if(ds >= this.t) { r.t = 0; return; }
-	  var bs = n%this.DB;
-	  var cbs = this.DB-bs;
-	  var bm = (1<<bs)-1;
-	  r[0] = this[ds]>>bs;
-	  for(var i = ds+1; i < this.t; ++i) {
-	    r[i-ds-1] |= (this[i]&bm)<<cbs;
-	    r[i-ds] = this[i]>>bs;
-	  }
-	  if(bs > 0) r[this.t-ds-1] |= (this.s&bm)<<cbs;
-	  r.t = this.t-ds;
-	  r.clamp();
-	}
-
-	// (protected) r = this - a
-	function bnpSubTo(a,r) {
-	  var i = 0, c = 0, m = Math.min(a.t,this.t);
-	  while(i < m) {
-	    c += this[i]-a[i];
-	    r[i++] = c&this.DM;
-	    c >>= this.DB;
-	  }
-	  if(a.t < this.t) {
-	    c -= a.s;
-	    while(i < this.t) {
-	      c += this[i];
-	      r[i++] = c&this.DM;
-	      c >>= this.DB;
-	    }
-	    c += this.s;
-	  }
-	  else {
-	    c += this.s;
-	    while(i < a.t) {
-	      c -= a[i];
-	      r[i++] = c&this.DM;
-	      c >>= this.DB;
-	    }
-	    c -= a.s;
-	  }
-	  r.s = (c<0)?-1:0;
-	  if(c < -1) r[i++] = this.DV+c;
-	  else if(c > 0) r[i++] = c;
-	  r.t = i;
-	  r.clamp();
-	}
-
-	// (protected) r = this * a, r != this,a (HAC 14.12)
-	// "this" should be the larger one if appropriate.
-	function bnpMultiplyTo(a,r) {
-	  var x = this.abs(), y = a.abs();
-	  var i = x.t;
-	  r.t = i+y.t;
-	  while(--i >= 0) r[i] = 0;
-	  for(i = 0; i < y.t; ++i) r[i+x.t] = x.am(0,y[i],r,i,0,x.t);
-	  r.s = 0;
-	  r.clamp();
-	  if(this.s != a.s) BigInteger.ZERO.subTo(r,r);
-	}
-
-	// (protected) r = this^2, r != this (HAC 14.16)
-	function bnpSquareTo(r) {
-	  var x = this.abs();
-	  var i = r.t = 2*x.t;
-	  while(--i >= 0) r[i] = 0;
-	  for(i = 0; i < x.t-1; ++i) {
-	    var c = x.am(i,x[i],r,2*i,0,1);
-	    if((r[i+x.t]+=x.am(i+1,2*x[i],r,2*i+1,c,x.t-i-1)) >= x.DV) {
-	      r[i+x.t] -= x.DV;
-	      r[i+x.t+1] = 1;
-	    }
-	  }
-	  if(r.t > 0) r[r.t-1] += x.am(i,x[i],r,2*i,0,1);
-	  r.s = 0;
-	  r.clamp();
-	}
-
-	// (protected) divide this by m, quotient and remainder to q, r (HAC 14.20)
-	// r != q, this != m.  q or r may be null.
-	function bnpDivRemTo(m,q,r) {
-	  var pm = m.abs();
-	  if(pm.t <= 0) return;
-	  var pt = this.abs();
-	  if(pt.t < pm.t) {
-	    if(q != null) q.fromInt(0);
-	    if(r != null) this.copyTo(r);
-	    return;
-	  }
-	  if(r == null) r = nbi();
-	  var y = nbi(), ts = this.s, ms = m.s;
-	  var nsh = this.DB-nbits(pm[pm.t-1]);	// normalize modulus
-	  if(nsh > 0) { pm.lShiftTo(nsh,y); pt.lShiftTo(nsh,r); }
-	  else { pm.copyTo(y); pt.copyTo(r); }
-	  var ys = y.t;
-	  var y0 = y[ys-1];
-	  if(y0 == 0) return;
-	  var yt = y0*(1<<this.F1)+((ys>1)?y[ys-2]>>this.F2:0);
-	  var d1 = this.FV/yt, d2 = (1<<this.F1)/yt, e = 1<<this.F2;
-	  var i = r.t, j = i-ys, t = (q==null)?nbi():q;
-	  y.dlShiftTo(j,t);
-	  if(r.compareTo(t) >= 0) {
-	    r[r.t++] = 1;
-	    r.subTo(t,r);
-	  }
-	  BigInteger.ONE.dlShiftTo(ys,t);
-	  t.subTo(y,y);	// "negative" y so we can replace sub with am later
-	  while(y.t < ys) y[y.t++] = 0;
-	  while(--j >= 0) {
-	    // Estimate quotient digit
-	    var qd = (r[--i]==y0)?this.DM:Math.floor(r[i]*d1+(r[i-1]+e)*d2);
-	    if((r[i]+=y.am(0,qd,r,j,0,ys)) < qd) {	// Try it out
-	      y.dlShiftTo(j,t);
-	      r.subTo(t,r);
-	      while(r[i] < --qd) r.subTo(t,r);
-	    }
-	  }
-	  if(q != null) {
-	    r.drShiftTo(ys,q);
-	    if(ts != ms) BigInteger.ZERO.subTo(q,q);
-	  }
-	  r.t = ys;
-	  r.clamp();
-	  if(nsh > 0) r.rShiftTo(nsh,r);	// Denormalize remainder
-	  if(ts < 0) BigInteger.ZERO.subTo(r,r);
-	}
-
-	// (public) this mod a
-	function bnMod(a) {
-	  var r = nbi();
-	  this.abs().divRemTo(a,null,r);
-	  if(this.s < 0 && r.compareTo(BigInteger.ZERO) > 0) a.subTo(r,r);
-	  return r;
-	}
-
-	// Modular reduction using "classic" algorithm
-	function Classic(m) { this.m = m; }
-	function cConvert(x) {
-	  if(x.s < 0 || x.compareTo(this.m) >= 0) return x.mod(this.m);
-	  else return x;
-	}
-	function cRevert(x) { return x; }
-	function cReduce(x) { x.divRemTo(this.m,null,x); }
-	function cMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-	function cSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-	Classic.prototype.convert = cConvert;
-	Classic.prototype.revert = cRevert;
-	Classic.prototype.reduce = cReduce;
-	Classic.prototype.mulTo = cMulTo;
-	Classic.prototype.sqrTo = cSqrTo;
-
-	// (protected) return "-1/this % 2^DB"; useful for Mont. reduction
-	// justification:
-	//         xy == 1 (mod m)
-	//         xy =  1+km
-	//   xy(2-xy) = (1+km)(1-km)
-	// x[y(2-xy)] = 1-k^2m^2
-	// x[y(2-xy)] == 1 (mod m^2)
-	// if y is 1/x mod m, then y(2-xy) is 1/x mod m^2
-	// should reduce x and y(2-xy) by m^2 at each step to keep size bounded.
-	// JS multiply "overflows" differently from C/C++, so care is needed here.
-	function bnpInvDigit() {
-	  if(this.t < 1) return 0;
-	  var x = this[0];
-	  if((x&1) == 0) return 0;
-	  var y = x&3;		// y == 1/x mod 2^2
-	  y = (y*(2-(x&0xf)*y))&0xf;	// y == 1/x mod 2^4
-	  y = (y*(2-(x&0xff)*y))&0xff;	// y == 1/x mod 2^8
-	  y = (y*(2-(((x&0xffff)*y)&0xffff)))&0xffff;	// y == 1/x mod 2^16
-	  // last step - calculate inverse mod DV directly;
-	  // assumes 16 < DB <= 32 and assumes ability to handle 48-bit ints
-	  y = (y*(2-x*y%this.DV))%this.DV;		// y == 1/x mod 2^dbits
-	  // we really want the negative inverse, and -DV < y < DV
-	  return (y>0)?this.DV-y:-y;
-	}
-
-	// Montgomery reduction
-	function Montgomery(m) {
-	  this.m = m;
-	  this.mp = m.invDigit();
-	  this.mpl = this.mp&0x7fff;
-	  this.mph = this.mp>>15;
-	  this.um = (1<<(m.DB-15))-1;
-	  this.mt2 = 2*m.t;
-	}
-
-	// xR mod m
-	function montConvert(x) {
-	  var r = nbi();
-	  x.abs().dlShiftTo(this.m.t,r);
-	  r.divRemTo(this.m,null,r);
-	  if(x.s < 0 && r.compareTo(BigInteger.ZERO) > 0) this.m.subTo(r,r);
-	  return r;
-	}
-
-	// x/R mod m
-	function montRevert(x) {
-	  var r = nbi();
-	  x.copyTo(r);
-	  this.reduce(r);
-	  return r;
-	}
-
-	// x = x/R mod m (HAC 14.32)
-	function montReduce(x) {
-	  while(x.t <= this.mt2)	// pad x so am has enough room later
-	    x[x.t++] = 0;
-	  for(var i = 0; i < this.m.t; ++i) {
-	    // faster way of calculating u0 = x[i]*mp mod DV
-	    var j = x[i]&0x7fff;
-	    var u0 = (j*this.mpl+(((j*this.mph+(x[i]>>15)*this.mpl)&this.um)<<15))&x.DM;
-	    // use am to combine the multiply-shift-add into one call
-	    j = i+this.m.t;
-	    x[j] += this.m.am(0,u0,x,i,0,this.m.t);
-	    // propagate carry
-	    while(x[j] >= x.DV) { x[j] -= x.DV; x[++j]++; }
-	  }
-	  x.clamp();
-	  x.drShiftTo(this.m.t,x);
-	  if(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
-	}
-
-	// r = "x^2/R mod m"; x != r
-	function montSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-	// r = "xy/R mod m"; x,y != r
-	function montMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-
-	Montgomery.prototype.convert = montConvert;
-	Montgomery.prototype.revert = montRevert;
-	Montgomery.prototype.reduce = montReduce;
-	Montgomery.prototype.mulTo = montMulTo;
-	Montgomery.prototype.sqrTo = montSqrTo;
-
-	// (protected) true iff this is even
-	function bnpIsEven() { return ((this.t>0)?(this[0]&1):this.s) == 0; }
-
-	// (protected) this^e, e < 2^32, doing sqr and mul with "r" (HAC 14.79)
-	function bnpExp(e,z) {
-	  if(e > 0xffffffff || e < 1) return BigInteger.ONE;
-	  var r = nbi(), r2 = nbi(), g = z.convert(this), i = nbits(e)-1;
-	  g.copyTo(r);
-	  while(--i >= 0) {
-	    z.sqrTo(r,r2);
-	    if((e&(1<<i)) > 0) z.mulTo(r2,g,r);
-	    else { var t = r; r = r2; r2 = t; }
-	  }
-	  return z.revert(r);
-	}
-
-	// (public) this^e % m, 0 <= e < 2^32
-	function bnModPowInt(e,m) {
-	  var z;
-	  if(e < 256 || m.isEven()) z = new Classic(m); else z = new Montgomery(m);
-	  return this.exp(e,z);
-	}
-
-	// (public)
-	function bnClone() { var r = nbi(); this.copyTo(r); return r; }
-
-	// (public) return value as integer
-	function bnIntValue() {
-	  if(this.s < 0) {
-	    if(this.t == 1) return this[0]-this.DV;
-	    else if(this.t == 0) return -1;
-	  }
-	  else if(this.t == 1) return this[0];
-	  else if(this.t == 0) return 0;
-	  // assumes 16 < DB < 32
-	  return ((this[1]&((1<<(32-this.DB))-1))<<this.DB)|this[0];
-	}
-
-	// (public) return value as byte
-	function bnByteValue() { return (this.t==0)?this.s:(this[0]<<24)>>24; }
-
-	// (public) return value as short (assumes DB>=16)
-	function bnShortValue() { return (this.t==0)?this.s:(this[0]<<16)>>16; }
-
-	// (protected) return x s.t. r^x < DV
-	function bnpChunkSize(r) { return Math.floor(Math.LN2*this.DB/Math.log(r)); }
-
-	// (public) 0 if this == 0, 1 if this > 0
-	function bnSigNum() {
-	  if(this.s < 0) return -1;
-	  else if(this.t <= 0 || (this.t == 1 && this[0] <= 0)) return 0;
-	  else return 1;
-	}
-
-	// (protected) convert to radix string
-	function bnpToRadix(b) {
-	  if(b == null) b = 10;
-	  if(this.signum() == 0 || b < 2 || b > 36) return "0";
-	  var cs = this.chunkSize(b);
-	  var a = Math.pow(b,cs);
-	  var d = nbv(a), y = nbi(), z = nbi(), r = "";
-	  this.divRemTo(d,y,z);
-	  while(y.signum() > 0) {
-	    r = (a+z.intValue()).toString(b).substr(1) + r;
-	    y.divRemTo(d,y,z);
-	  }
-	  return z.intValue().toString(b) + r;
-	}
-
-	// (protected) convert from radix string
-	function bnpFromRadix(s,b) {
-	  this.fromInt(0);
-	  if(b == null) b = 10;
-	  var cs = this.chunkSize(b);
-	  var d = Math.pow(b,cs), mi = false, j = 0, w = 0;
-	  for(var i = 0; i < s.length; ++i) {
-	    var x = intAt(s,i);
-	    if(x < 0) {
-	      if(s.charAt(i) == "-" && this.signum() == 0) mi = true;
-	      continue;
-	    }
-	    w = b*w+x;
-	    if(++j >= cs) {
-	      this.dMultiply(d);
-	      this.dAddOffset(w,0);
-	      j = 0;
-	      w = 0;
-	    }
-	  }
-	  if(j > 0) {
-	    this.dMultiply(Math.pow(b,j));
-	    this.dAddOffset(w,0);
-	  }
-	  if(mi) BigInteger.ZERO.subTo(this,this);
-	}
-
-	// (protected) alternate constructor
-	function bnpFromNumber(a,b,c) {
-	  if("number" == typeof b) {
-	    // new BigInteger(int,int,RNG)
-	    if(a < 2) this.fromInt(1);
-	    else {
-	      this.fromNumber(a,c);
-	      if(!this.testBit(a-1))	// force MSB set
-	        this.bitwiseTo(BigInteger.ONE.shiftLeft(a-1),op_or,this);
-	      if(this.isEven()) this.dAddOffset(1,0); // force odd
-	      while(!this.isProbablePrime(b)) {
-	        this.dAddOffset(2,0);
-	        if(this.bitLength() > a) this.subTo(BigInteger.ONE.shiftLeft(a-1),this);
-	      }
-	    }
-	  }
-	  else {
-	    // new BigInteger(int,RNG)
-	    var x = new Array(), t = a&7;
-	    x.length = (a>>3)+1;
-	    b.nextBytes(x);
-	    if(t > 0) x[0] &= ((1<<t)-1); else x[0] = 0;
-	    this.fromString(x,256);
-	  }
-	}
-
-	// (public) convert to bigendian byte array
-	function bnToByteArray() {
-	  var i = this.t, r = new Array();
-	  r[0] = this.s;
-	  var p = this.DB-(i*this.DB)%8, d, k = 0;
-	  if(i-- > 0) {
-	    if(p < this.DB && (d = this[i]>>p) != (this.s&this.DM)>>p)
-	      r[k++] = d|(this.s<<(this.DB-p));
-	    while(i >= 0) {
-	      if(p < 8) {
-	        d = (this[i]&((1<<p)-1))<<(8-p);
-	        d |= this[--i]>>(p+=this.DB-8);
-	      }
-	      else {
-	        d = (this[i]>>(p-=8))&0xff;
-	        if(p <= 0) { p += this.DB; --i; }
-	      }
-	      if((d&0x80) != 0) d |= -256;
-	      if(k == 0 && (this.s&0x80) != (d&0x80)) ++k;
-	      if(k > 0 || d != this.s) r[k++] = d;
-	    }
-	  }
-	  return r;
-	}
-
-	function bnEquals(a) { return(this.compareTo(a)==0); }
-	function bnMin(a) { return(this.compareTo(a)<0)?this:a; }
-	function bnMax(a) { return(this.compareTo(a)>0)?this:a; }
-
-	// (protected) r = this op a (bitwise)
-	function bnpBitwiseTo(a,op,r) {
-	  var i, f, m = Math.min(a.t,this.t);
-	  for(i = 0; i < m; ++i) r[i] = op(this[i],a[i]);
-	  if(a.t < this.t) {
-	    f = a.s&this.DM;
-	    for(i = m; i < this.t; ++i) r[i] = op(this[i],f);
-	    r.t = this.t;
-	  }
-	  else {
-	    f = this.s&this.DM;
-	    for(i = m; i < a.t; ++i) r[i] = op(f,a[i]);
-	    r.t = a.t;
-	  }
-	  r.s = op(this.s,a.s);
-	  r.clamp();
-	}
-
-	// (public) this & a
-	function op_and(x,y) { return x&y; }
-	function bnAnd(a) { var r = nbi(); this.bitwiseTo(a,op_and,r); return r; }
-
-	// (public) this | a
-	function op_or(x,y) { return x|y; }
-	function bnOr(a) { var r = nbi(); this.bitwiseTo(a,op_or,r); return r; }
-
-	// (public) this ^ a
-	function op_xor(x,y) { return x^y; }
-	function bnXor(a) { var r = nbi(); this.bitwiseTo(a,op_xor,r); return r; }
-
-	// (public) this & ~a
-	function op_andnot(x,y) { return x&~y; }
-	function bnAndNot(a) { var r = nbi(); this.bitwiseTo(a,op_andnot,r); return r; }
-
-	// (public) ~this
-	function bnNot() {
-	  var r = nbi();
-	  for(var i = 0; i < this.t; ++i) r[i] = this.DM&~this[i];
-	  r.t = this.t;
-	  r.s = ~this.s;
-	  return r;
-	}
-
-	// (public) this << n
-	function bnShiftLeft(n) {
-	  var r = nbi();
-	  if(n < 0) this.rShiftTo(-n,r); else this.lShiftTo(n,r);
-	  return r;
-	}
-
-	// (public) this >> n
-	function bnShiftRight(n) {
-	  var r = nbi();
-	  if(n < 0) this.lShiftTo(-n,r); else this.rShiftTo(n,r);
-	  return r;
-	}
-
-	// return index of lowest 1-bit in x, x < 2^31
-	function lbit(x) {
-	  if(x == 0) return -1;
-	  var r = 0;
-	  if((x&0xffff) == 0) { x >>= 16; r += 16; }
-	  if((x&0xff) == 0) { x >>= 8; r += 8; }
-	  if((x&0xf) == 0) { x >>= 4; r += 4; }
-	  if((x&3) == 0) { x >>= 2; r += 2; }
-	  if((x&1) == 0) ++r;
-	  return r;
-	}
-
-	// (public) returns index of lowest 1-bit (or -1 if none)
-	function bnGetLowestSetBit() {
-	  for(var i = 0; i < this.t; ++i)
-	    if(this[i] != 0) return i*this.DB+lbit(this[i]);
-	  if(this.s < 0) return this.t*this.DB;
-	  return -1;
-	}
-
-	// return number of 1 bits in x
-	function cbit(x) {
-	  var r = 0;
-	  while(x != 0) { x &= x-1; ++r; }
-	  return r;
-	}
-
-	// (public) return number of set bits
-	function bnBitCount() {
-	  var r = 0, x = this.s&this.DM;
-	  for(var i = 0; i < this.t; ++i) r += cbit(this[i]^x);
-	  return r;
-	}
-
-	// (public) true iff nth bit is set
-	function bnTestBit(n) {
-	  var j = Math.floor(n/this.DB);
-	  if(j >= this.t) return(this.s!=0);
-	  return((this[j]&(1<<(n%this.DB)))!=0);
-	}
-
-	// (protected) this op (1<<n)
-	function bnpChangeBit(n,op) {
-	  var r = BigInteger.ONE.shiftLeft(n);
-	  this.bitwiseTo(r,op,r);
-	  return r;
-	}
-
-	// (public) this | (1<<n)
-	function bnSetBit(n) { return this.changeBit(n,op_or); }
-
-	// (public) this & ~(1<<n)
-	function bnClearBit(n) { return this.changeBit(n,op_andnot); }
-
-	// (public) this ^ (1<<n)
-	function bnFlipBit(n) { return this.changeBit(n,op_xor); }
-
-	// (protected) r = this + a
-	function bnpAddTo(a,r) {
-	  var i = 0, c = 0, m = Math.min(a.t,this.t);
-	  while(i < m) {
-	    c += this[i]+a[i];
-	    r[i++] = c&this.DM;
-	    c >>= this.DB;
-	  }
-	  if(a.t < this.t) {
-	    c += a.s;
-	    while(i < this.t) {
-	      c += this[i];
-	      r[i++] = c&this.DM;
-	      c >>= this.DB;
-	    }
-	    c += this.s;
-	  }
-	  else {
-	    c += this.s;
-	    while(i < a.t) {
-	      c += a[i];
-	      r[i++] = c&this.DM;
-	      c >>= this.DB;
-	    }
-	    c += a.s;
-	  }
-	  r.s = (c<0)?-1:0;
-	  if(c > 0) r[i++] = c;
-	  else if(c < -1) r[i++] = this.DV+c;
-	  r.t = i;
-	  r.clamp();
-	}
-
-	// (public) this + a
-	function bnAdd(a) { var r = nbi(); this.addTo(a,r); return r; }
-
-	// (public) this - a
-	function bnSubtract(a) { var r = nbi(); this.subTo(a,r); return r; }
-
-	// (public) this * a
-	function bnMultiply(a) { var r = nbi(); this.multiplyTo(a,r); return r; }
-
-	// (public) this^2
-	function bnSquare() { var r = nbi(); this.squareTo(r); return r; }
-
-	// (public) this / a
-	function bnDivide(a) { var r = nbi(); this.divRemTo(a,r,null); return r; }
-
-	// (public) this % a
-	function bnRemainder(a) { var r = nbi(); this.divRemTo(a,null,r); return r; }
-
-	// (public) [this/a,this%a]
-	function bnDivideAndRemainder(a) {
-	  var q = nbi(), r = nbi();
-	  this.divRemTo(a,q,r);
-	  return new Array(q,r);
-	}
-
-	// (protected) this *= n, this >= 0, 1 < n < DV
-	function bnpDMultiply(n) {
-	  this[this.t] = this.am(0,n-1,this,0,0,this.t);
-	  ++this.t;
-	  this.clamp();
-	}
-
-	// (protected) this += n << w words, this >= 0
-	function bnpDAddOffset(n,w) {
-	  if(n == 0) return;
-	  while(this.t <= w) this[this.t++] = 0;
-	  this[w] += n;
-	  while(this[w] >= this.DV) {
-	    this[w] -= this.DV;
-	    if(++w >= this.t) this[this.t++] = 0;
-	    ++this[w];
-	  }
-	}
-
-	// A "null" reducer
-	function NullExp() {}
-	function nNop(x) { return x; }
-	function nMulTo(x,y,r) { x.multiplyTo(y,r); }
-	function nSqrTo(x,r) { x.squareTo(r); }
-
-	NullExp.prototype.convert = nNop;
-	NullExp.prototype.revert = nNop;
-	NullExp.prototype.mulTo = nMulTo;
-	NullExp.prototype.sqrTo = nSqrTo;
-
-	// (public) this^e
-	function bnPow(e) { return this.exp(e,new NullExp()); }
-
-	// (protected) r = lower n words of "this * a", a.t <= n
-	// "this" should be the larger one if appropriate.
-	function bnpMultiplyLowerTo(a,n,r) {
-	  var i = Math.min(this.t+a.t,n);
-	  r.s = 0; // assumes a,this >= 0
-	  r.t = i;
-	  while(i > 0) r[--i] = 0;
-	  var j;
-	  for(j = r.t-this.t; i < j; ++i) r[i+this.t] = this.am(0,a[i],r,i,0,this.t);
-	  for(j = Math.min(a.t,n); i < j; ++i) this.am(0,a[i],r,i,0,n-i);
-	  r.clamp();
-	}
-
-	// (protected) r = "this * a" without lower n words, n > 0
-	// "this" should be the larger one if appropriate.
-	function bnpMultiplyUpperTo(a,n,r) {
-	  --n;
-	  var i = r.t = this.t+a.t-n;
-	  r.s = 0; // assumes a,this >= 0
-	  while(--i >= 0) r[i] = 0;
-	  for(i = Math.max(n-this.t,0); i < a.t; ++i)
-	    r[this.t+i-n] = this.am(n-i,a[i],r,0,0,this.t+i-n);
-	  r.clamp();
-	  r.drShiftTo(1,r);
-	}
-
-	// Barrett modular reduction
-	function Barrett(m) {
-	  // setup Barrett
-	  this.r2 = nbi();
-	  this.q3 = nbi();
-	  BigInteger.ONE.dlShiftTo(2*m.t,this.r2);
-	  this.mu = this.r2.divide(m);
-	  this.m = m;
-	}
-
-	function barrettConvert(x) {
-	  if(x.s < 0 || x.t > 2*this.m.t) return x.mod(this.m);
-	  else if(x.compareTo(this.m) < 0) return x;
-	  else { var r = nbi(); x.copyTo(r); this.reduce(r); return r; }
-	}
-
-	function barrettRevert(x) { return x; }
-
-	// x = x mod m (HAC 14.42)
-	function barrettReduce(x) {
-	  x.drShiftTo(this.m.t-1,this.r2);
-	  if(x.t > this.m.t+1) { x.t = this.m.t+1; x.clamp(); }
-	  this.mu.multiplyUpperTo(this.r2,this.m.t+1,this.q3);
-	  this.m.multiplyLowerTo(this.q3,this.m.t+1,this.r2);
-	  while(x.compareTo(this.r2) < 0) x.dAddOffset(1,this.m.t+1);
-	  x.subTo(this.r2,x);
-	  while(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
-	}
-
-	// r = x^2 mod m; x != r
-	function barrettSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
-
-	// r = x*y mod m; x,y != r
-	function barrettMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
-
-	Barrett.prototype.convert = barrettConvert;
-	Barrett.prototype.revert = barrettRevert;
-	Barrett.prototype.reduce = barrettReduce;
-	Barrett.prototype.mulTo = barrettMulTo;
-	Barrett.prototype.sqrTo = barrettSqrTo;
-
-	// (public) this^e % m (HAC 14.85)
-	function bnModPow(e,m) {
-	  var i = e.bitLength(), k, r = nbv(1), z;
-	  if(i <= 0) return r;
-	  else if(i < 18) k = 1;
-	  else if(i < 48) k = 3;
-	  else if(i < 144) k = 4;
-	  else if(i < 768) k = 5;
-	  else k = 6;
-	  if(i < 8)
-	    z = new Classic(m);
-	  else if(m.isEven())
-	    z = new Barrett(m);
-	  else
-	    z = new Montgomery(m);
-
-	  // precomputation
-	  var g = new Array(), n = 3, k1 = k-1, km = (1<<k)-1;
-	  g[1] = z.convert(this);
-	  if(k > 1) {
-	    var g2 = nbi();
-	    z.sqrTo(g[1],g2);
-	    while(n <= km) {
-	      g[n] = nbi();
-	      z.mulTo(g2,g[n-2],g[n]);
-	      n += 2;
-	    }
-	  }
-
-	  var j = e.t-1, w, is1 = true, r2 = nbi(), t;
-	  i = nbits(e[j])-1;
-	  while(j >= 0) {
-	    if(i >= k1) w = (e[j]>>(i-k1))&km;
-	    else {
-	      w = (e[j]&((1<<(i+1))-1))<<(k1-i);
-	      if(j > 0) w |= e[j-1]>>(this.DB+i-k1);
-	    }
-
-	    n = k;
-	    while((w&1) == 0) { w >>= 1; --n; }
-	    if((i -= n) < 0) { i += this.DB; --j; }
-	    if(is1) {	// ret == 1, don't bother squaring or multiplying it
-	      g[w].copyTo(r);
-	      is1 = false;
-	    }
-	    else {
-	      while(n > 1) { z.sqrTo(r,r2); z.sqrTo(r2,r); n -= 2; }
-	      if(n > 0) z.sqrTo(r,r2); else { t = r; r = r2; r2 = t; }
-	      z.mulTo(r2,g[w],r);
-	    }
-
-	    while(j >= 0 && (e[j]&(1<<i)) == 0) {
-	      z.sqrTo(r,r2); t = r; r = r2; r2 = t;
-	      if(--i < 0) { i = this.DB-1; --j; }
-	    }
-	  }
-	  return z.revert(r);
-	}
-
-	// (public) gcd(this,a) (HAC 14.54)
-	function bnGCD(a) {
-	  var x = (this.s<0)?this.negate():this.clone();
-	  var y = (a.s<0)?a.negate():a.clone();
-	  if(x.compareTo(y) < 0) { var t = x; x = y; y = t; }
-	  var i = x.getLowestSetBit(), g = y.getLowestSetBit();
-	  if(g < 0) return x;
-	  if(i < g) g = i;
-	  if(g > 0) {
-	    x.rShiftTo(g,x);
-	    y.rShiftTo(g,y);
-	  }
-	  while(x.signum() > 0) {
-	    if((i = x.getLowestSetBit()) > 0) x.rShiftTo(i,x);
-	    if((i = y.getLowestSetBit()) > 0) y.rShiftTo(i,y);
-	    if(x.compareTo(y) >= 0) {
-	      x.subTo(y,x);
-	      x.rShiftTo(1,x);
-	    }
-	    else {
-	      y.subTo(x,y);
-	      y.rShiftTo(1,y);
-	    }
-	  }
-	  if(g > 0) y.lShiftTo(g,y);
-	  return y;
-	}
-
-	// (protected) this % n, n < 2^26
-	function bnpModInt(n) {
-	  if(n <= 0) return 0;
-	  var d = this.DV%n, r = (this.s<0)?n-1:0;
-	  if(this.t > 0)
-	    if(d == 0) r = this[0]%n;
-	    else for(var i = this.t-1; i >= 0; --i) r = (d*r+this[i])%n;
-	  return r;
-	}
-
-	// (public) 1/this % m (HAC 14.61)
-	function bnModInverse(m) {
-	  var ac = m.isEven();
-	  if((this.isEven() && ac) || m.signum() == 0) return BigInteger.ZERO;
-	  var u = m.clone(), v = this.clone();
-	  var a = nbv(1), b = nbv(0), c = nbv(0), d = nbv(1);
-	  while(u.signum() != 0) {
-	    while(u.isEven()) {
-	      u.rShiftTo(1,u);
-	      if(ac) {
-	        if(!a.isEven() || !b.isEven()) { a.addTo(this,a); b.subTo(m,b); }
-	        a.rShiftTo(1,a);
-	      }
-	      else if(!b.isEven()) b.subTo(m,b);
-	      b.rShiftTo(1,b);
-	    }
-	    while(v.isEven()) {
-	      v.rShiftTo(1,v);
-	      if(ac) {
-	        if(!c.isEven() || !d.isEven()) { c.addTo(this,c); d.subTo(m,d); }
-	        c.rShiftTo(1,c);
-	      }
-	      else if(!d.isEven()) d.subTo(m,d);
-	      d.rShiftTo(1,d);
-	    }
-	    if(u.compareTo(v) >= 0) {
-	      u.subTo(v,u);
-	      if(ac) a.subTo(c,a);
-	      b.subTo(d,b);
-	    }
-	    else {
-	      v.subTo(u,v);
-	      if(ac) c.subTo(a,c);
-	      d.subTo(b,d);
-	    }
-	  }
-	  if(v.compareTo(BigInteger.ONE) != 0) return BigInteger.ZERO;
-	  if(d.compareTo(m) >= 0) return d.subtract(m);
-	  if(d.signum() < 0) d.addTo(m,d); else return d;
-	  if(d.signum() < 0) return d.add(m); else return d;
-	}
-
-	var lowprimes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,191,193,197,199,211,223,227,229,233,239,241,251,257,263,269,271,277,281,283,293,307,311,313,317,331,337,347,349,353,359,367,373,379,383,389,397,401,409,419,421,431,433,439,443,449,457,461,463,467,479,487,491,499,503,509,521,523,541,547,557,563,569,571,577,587,593,599,601,607,613,617,619,631,641,643,647,653,659,661,673,677,683,691,701,709,719,727,733,739,743,751,757,761,769,773,787,797,809,811,821,823,827,829,839,853,857,859,863,877,881,883,887,907,911,919,929,937,941,947,953,967,971,977,983,991,997];
-	var lplim = (1<<26)/lowprimes[lowprimes.length-1];
-
-	// (public) test primality with certainty >= 1-.5^t
-	function bnIsProbablePrime(t) {
-	  var i, x = this.abs();
-	  if(x.t == 1 && x[0] <= lowprimes[lowprimes.length-1]) {
-	    for(i = 0; i < lowprimes.length; ++i)
-	      if(x[0] == lowprimes[i]) return true;
-	    return false;
-	  }
-	  if(x.isEven()) return false;
-	  i = 1;
-	  while(i < lowprimes.length) {
-	    var m = lowprimes[i], j = i+1;
-	    while(j < lowprimes.length && m < lplim) m *= lowprimes[j++];
-	    m = x.modInt(m);
-	    while(i < j) if(m%lowprimes[i++] == 0) return false;
-	  }
-	  return x.millerRabin(t);
-	}
-
-	// (protected) true if probably prime (HAC 4.24, Miller-Rabin)
-	function bnpMillerRabin(t) {
-	  var n1 = this.subtract(BigInteger.ONE);
-	  var k = n1.getLowestSetBit();
-	  if(k <= 0) return false;
-	  var r = n1.shiftRight(k);
-	  t = (t+1)>>1;
-	  if(t > lowprimes.length) t = lowprimes.length;
-	  var a = nbi();
-	  for(var i = 0; i < t; ++i) {
-	    //Pick bases at random, instead of starting at 2
-	    a.fromInt(lowprimes[Math.floor(Math.random()*lowprimes.length)]);
-	    var y = a.modPow(r,this);
-	    if(y.compareTo(BigInteger.ONE) != 0 && y.compareTo(n1) != 0) {
-	      var j = 1;
-	      while(j++ < k && y.compareTo(n1) != 0) {
-	        y = y.modPowInt(2,this);
-	        if(y.compareTo(BigInteger.ONE) == 0) return false;
-	      }
-	      if(y.compareTo(n1) != 0) return false;
-	    }
-	  }
-	  return true;
-	}
-
-
-	// protected
-	BigInteger.prototype.chunkSize = bnpChunkSize;
-	BigInteger.prototype.toRadix = bnpToRadix;
-	BigInteger.prototype.fromRadix = bnpFromRadix;
-	BigInteger.prototype.fromNumber = bnpFromNumber;
-	BigInteger.prototype.bitwiseTo = bnpBitwiseTo;
-	BigInteger.prototype.changeBit = bnpChangeBit;
-	BigInteger.prototype.addTo = bnpAddTo;
-	BigInteger.prototype.dMultiply = bnpDMultiply;
-	BigInteger.prototype.dAddOffset = bnpDAddOffset;
-	BigInteger.prototype.multiplyLowerTo = bnpMultiplyLowerTo;
-	BigInteger.prototype.multiplyUpperTo = bnpMultiplyUpperTo;
-	BigInteger.prototype.modInt = bnpModInt;
-	BigInteger.prototype.millerRabin = bnpMillerRabin;
-
-	BigInteger.prototype.copyTo = bnpCopyTo;
-	BigInteger.prototype.fromInt = bnpFromInt;
-	BigInteger.prototype.fromString = bnpFromString;
-	BigInteger.prototype.clamp = bnpClamp;
-	BigInteger.prototype.dlShiftTo = bnpDLShiftTo;
-	BigInteger.prototype.drShiftTo = bnpDRShiftTo;
-	BigInteger.prototype.lShiftTo = bnpLShiftTo;
-	BigInteger.prototype.rShiftTo = bnpRShiftTo;
-	BigInteger.prototype.subTo = bnpSubTo;
-	BigInteger.prototype.multiplyTo = bnpMultiplyTo;
-	BigInteger.prototype.squareTo = bnpSquareTo;
-	BigInteger.prototype.divRemTo = bnpDivRemTo;
-	BigInteger.prototype.invDigit = bnpInvDigit;
-	BigInteger.prototype.isEven = bnpIsEven;
-	BigInteger.prototype.exp = bnpExp;
-
-	// public
-	BigInteger.prototype.toString = bnToString;
-	BigInteger.prototype.negate = bnNegate;
-	BigInteger.prototype.abs = bnAbs;
-	BigInteger.prototype.compareTo = bnCompareTo;
-	BigInteger.prototype.bitLength = bnBitLength;
-	BigInteger.prototype.mod = bnMod;
-	BigInteger.prototype.modPowInt = bnModPowInt;
-
-	BigInteger.prototype.clone = bnClone;
-	BigInteger.prototype.intValue = bnIntValue;
-	BigInteger.prototype.byteValue = bnByteValue;
-	BigInteger.prototype.shortValue = bnShortValue;
-	BigInteger.prototype.signum = bnSigNum;
-	BigInteger.prototype.toByteArray = bnToByteArray;
-	BigInteger.prototype.equals = bnEquals;
-	BigInteger.prototype.min = bnMin;
-	BigInteger.prototype.max = bnMax;
-	BigInteger.prototype.and = bnAnd;
-	BigInteger.prototype.or = bnOr;
-	BigInteger.prototype.xor = bnXor;
-	BigInteger.prototype.andNot = bnAndNot;
-	BigInteger.prototype.not = bnNot;
-	BigInteger.prototype.shiftLeft = bnShiftLeft;
-	BigInteger.prototype.shiftRight = bnShiftRight;
-	BigInteger.prototype.getLowestSetBit = bnGetLowestSetBit;
-	BigInteger.prototype.bitCount = bnBitCount;
-	BigInteger.prototype.testBit = bnTestBit;
-	BigInteger.prototype.setBit = bnSetBit;
-	BigInteger.prototype.clearBit = bnClearBit;
-	BigInteger.prototype.flipBit = bnFlipBit;
-	BigInteger.prototype.add = bnAdd;
-	BigInteger.prototype.subtract = bnSubtract;
-	BigInteger.prototype.multiply = bnMultiply;
-	BigInteger.prototype.divide = bnDivide;
-	BigInteger.prototype.remainder = bnRemainder;
-	BigInteger.prototype.divideAndRemainder = bnDivideAndRemainder;
-	BigInteger.prototype.modPow = bnModPow;
-	BigInteger.prototype.modInverse = bnModInverse;
-	BigInteger.prototype.pow = bnPow;
-	BigInteger.prototype.gcd = bnGCD;
-	BigInteger.prototype.isProbablePrime = bnIsProbablePrime;
-
-	// JSBN-specific extension
-	BigInteger.prototype.square = bnSquare;
-
-	// "constants"
-	BigInteger.ZERO = nbv(0);
-	BigInteger.ONE = nbv(1);
-
-	// BigInteger interfaces not implemented in jsbn:
-
-	// BigInteger(int signum, byte[] magnitude)
-	// double doubleValue()
-	// float floatValue()
-	// int hashCode()
-	// long longValue()
-	// static BigInteger valueOf(long val)
-
-	BigInteger.valueOf = nbi;
-
-	exports.BigInteger = BigInteger;
-
-
-/***/ },
-/* 35 */
-/***/ function(module, exports, __webpack_require__) {
-
-	// If there is no WebSocket, try MozWebSocket (support for some old browsers)
-	try {
-	  module.exports = WebSocket;
-	} catch(err) {
-	  module.exports = MozWebSocket;
-	}
-
-	// Some versions of Safari Mac 5 and Safari iOS 4 seem to support websockets,
-	// but can't communicate with websocketpp, which is what rippled uses.
-	//
-	// Note that we check for both the WebSocket protocol version the browser seems
-	// to implement as well as the user agent etc. The reason is that we want to err
-	// on the side of trying to connect since we don't want to accidentally disable
-	// a browser that would normally work fine.
-	var match, versionRegexp = /Version\/(\d+)\.(\d+)(?:\.(\d+))?.*Safari\//;
-	if (
-	  // Is browser
-	  "object" === typeof navigator &&
-	  "string" === typeof navigator.userAgent &&
-	  // Is Safari
-	  (match = versionRegexp.exec(navigator.userAgent)) &&
-	  // And uses the old websocket protocol
-	  2 === window.WebSocket.CLOSED
-	) {
-	  // Is iOS
-	  if (/iP(hone|od|ad)/.test(navigator.platform)) {
-	    // Below version 5 is broken
-	    if (+match[1] < 5) {
-	      module.exports = void(0);
-	    }
-	  // Is any other Mac OS
-	  // If you want to refactor this code, be careful, iOS user agents contain the
-	  // string "like Mac OS X".
-	  } else if (navigator.appVersion.indexOf("Mac") !== -1) {
-	    // Below version 6 is broken
-	    if (+match[1] < 6) {
-	      module.exports = void(0);
-	    }
-	  }
-	}
-
-
-/***/ },
-/* 36 */
-/***/ function(module, exports, __webpack_require__) {
-
-	// Copyright Joyent, Inc. and other Node contributors.
-	//
-	// Permission is hereby granted, free of charge, to any person obtaining a
-	// copy of this software and associated documentation files (the
-	// "Software"), to deal in the Software without restriction, including
-	// without limitation the rights to use, copy, modify, merge, publish,
-	// distribute, sublicense, and/or sell copies of the Software, and to permit
-	// persons to whom the Software is furnished to do so, subject to the
-	// following conditions:
-	//
-	// The above copyright notice and this permission notice shall be included
-	// in all copies or substantial portions of the Software.
-	//
-	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-	// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-	function EventEmitter() {
-	  this._events = this._events || {};
-	  this._maxListeners = this._maxListeners || undefined;
-	}
-	module.exports = EventEmitter;
-
-	// Backwards-compat with node 0.10.x
-	EventEmitter.EventEmitter = EventEmitter;
-
-	EventEmitter.prototype._events = undefined;
-	EventEmitter.prototype._maxListeners = undefined;
-
-	// By default EventEmitters will print a warning if more than 10 listeners are
-	// added to it. This is a useful default which helps finding memory leaks.
-	EventEmitter.defaultMaxListeners = 10;
-
-	// Obviously not all Emitters should be limited to 10. This function allows
-	// that to be increased. Set to zero for unlimited.
-	EventEmitter.prototype.setMaxListeners = function(n) {
-	  if (!isNumber(n) || n < 0 || isNaN(n))
-	    throw TypeError('n must be a positive number');
-	  this._maxListeners = n;
-	  return this;
-	};
-
-	EventEmitter.prototype.emit = function(type) {
-	  var er, handler, len, args, i, listeners;
-
-	  if (!this._events)
-	    this._events = {};
-
-	  // If there is no 'error' event listener then throw.
-	  if (type === 'error') {
-	    if (!this._events.error ||
-	        (isObject(this._events.error) && !this._events.error.length)) {
-	      er = arguments[1];
-	      if (er instanceof Error) {
-	        throw er; // Unhandled 'error' event
-	      } else {
-	        throw TypeError('Uncaught, unspecified "error" event.');
-	      }
-	      return false;
-	    }
-	  }
-
-	  handler = this._events[type];
-
-	  if (isUndefined(handler))
-	    return false;
-
-	  if (isFunction(handler)) {
-	    switch (arguments.length) {
-	      // fast cases
-	      case 1:
-	        handler.call(this);
-	        break;
-	      case 2:
-	        handler.call(this, arguments[1]);
-	        break;
-	      case 3:
-	        handler.call(this, arguments[1], arguments[2]);
-	        break;
-	      // slower
-	      default:
-	        len = arguments.length;
-	        args = new Array(len - 1);
-	        for (i = 1; i < len; i++)
-	          args[i - 1] = arguments[i];
-	        handler.apply(this, args);
-	    }
-	  } else if (isObject(handler)) {
-	    len = arguments.length;
-	    args = new Array(len - 1);
-	    for (i = 1; i < len; i++)
-	      args[i - 1] = arguments[i];
-
-	    listeners = handler.slice();
-	    len = listeners.length;
-	    for (i = 0; i < len; i++)
-	      listeners[i].apply(this, args);
-	  }
-
-	  return true;
-	};
-
-	EventEmitter.prototype.addListener = function(type, listener) {
-	  var m;
-
-	  if (!isFunction(listener))
-	    throw TypeError('listener must be a function');
-
-	  if (!this._events)
-	    this._events = {};
-
-	  // To avoid recursion in the case that type === "newListener"! Before
-	  // adding it to the listeners, first emit "newListener".
-	  if (this._events.newListener)
-	    this.emit('newListener', type,
-	              isFunction(listener.listener) ?
-	              listener.listener : listener);
-
-	  if (!this._events[type])
-	    // Optimize the case of one listener. Don't need the extra array object.
-	    this._events[type] = listener;
-	  else if (isObject(this._events[type]))
-	    // If we've already got an array, just append.
-	    this._events[type].push(listener);
-	  else
-	    // Adding the second element, need to change to array.
-	    this._events[type] = [this._events[type], listener];
-
-	  // Check for listener leak
-	  if (isObject(this._events[type]) && !this._events[type].warned) {
-	    var m;
-	    if (!isUndefined(this._maxListeners)) {
-	      m = this._maxListeners;
-	    } else {
-	      m = EventEmitter.defaultMaxListeners;
-	    }
-
-	    if (m && m > 0 && this._events[type].length > m) {
-	      this._events[type].warned = true;
-	      console.error('(node) warning: possible EventEmitter memory ' +
-	                    'leak detected. %d listeners added. ' +
-	                    'Use emitter.setMaxListeners() to increase limit.',
-	                    this._events[type].length);
-	      if (typeof console.trace === 'function') {
-	        // not supported in IE 10
-	        console.trace();
-	      }
-	    }
-	  }
-
-	  return this;
-	};
-
-	EventEmitter.prototype.on = EventEmitter.prototype.addListener;
-
-	EventEmitter.prototype.once = function(type, listener) {
-	  if (!isFunction(listener))
-	    throw TypeError('listener must be a function');
-
-	  var fired = false;
-
-	  function g() {
-	    this.removeListener(type, g);
-
-	    if (!fired) {
-	      fired = true;
-	      listener.apply(this, arguments);
-	    }
-	  }
-
-	  g.listener = listener;
-	  this.on(type, g);
-
-	  return this;
-	};
-
-	// emits a 'removeListener' event iff the listener was removed
-	EventEmitter.prototype.removeListener = function(type, listener) {
-	  var list, position, length, i;
-
-	  if (!isFunction(listener))
-	    throw TypeError('listener must be a function');
-
-	  if (!this._events || !this._events[type])
-	    return this;
-
-	  list = this._events[type];
-	  length = list.length;
-	  position = -1;
-
-	  if (list === listener ||
-	      (isFunction(list.listener) && list.listener === listener)) {
-	    delete this._events[type];
-	    if (this._events.removeListener)
-	      this.emit('removeListener', type, listener);
-
-	  } else if (isObject(list)) {
-	    for (i = length; i-- > 0;) {
-	      if (list[i] === listener ||
-	          (list[i].listener && list[i].listener === listener)) {
-	        position = i;
-	        break;
-	      }
-	    }
-
-	    if (position < 0)
-	      return this;
-
-	    if (list.length === 1) {
-	      list.length = 0;
-	      delete this._events[type];
-	    } else {
-	      list.splice(position, 1);
-	    }
-
-	    if (this._events.removeListener)
-	      this.emit('removeListener', type, listener);
-	  }
-
-	  return this;
-	};
-
-	EventEmitter.prototype.removeAllListeners = function(type) {
-	  var key, listeners;
-
-	  if (!this._events)
-	    return this;
-
-	  // not listening for removeListener, no need to emit
-	  if (!this._events.removeListener) {
-	    if (arguments.length === 0)
-	      this._events = {};
-	    else if (this._events[type])
-	      delete this._events[type];
-	    return this;
-	  }
-
-	  // emit removeListener for all listeners on all events
-	  if (arguments.length === 0) {
-	    for (key in this._events) {
-	      if (key === 'removeListener') continue;
-	      this.removeAllListeners(key);
-	    }
-	    this.removeAllListeners('removeListener');
-	    this._events = {};
-	    return this;
-	  }
-
-	  listeners = this._events[type];
-
-	  if (isFunction(listeners)) {
-	    this.removeListener(type, listeners);
-	  } else {
-	    // LIFO order
-	    while (listeners.length)
-	      this.removeListener(type, listeners[listeners.length - 1]);
-	  }
-	  delete this._events[type];
-
-	  return this;
-	};
-
-	EventEmitter.prototype.listeners = function(type) {
-	  var ret;
-	  if (!this._events || !this._events[type])
-	    ret = [];
-	  else if (isFunction(this._events[type]))
-	    ret = [this._events[type]];
-	  else
-	    ret = this._events[type].slice();
-	  return ret;
-	};
-
-	EventEmitter.listenerCount = function(emitter, type) {
-	  var ret;
-	  if (!emitter._events || !emitter._events[type])
-	    ret = 0;
-	  else if (isFunction(emitter._events[type]))
-	    ret = 1;
-	  else
-	    ret = emitter._events[type].length;
-	  return ret;
-	};
-
-	function isFunction(arg) {
-	  return typeof arg === 'function';
-	}
-
-	function isNumber(arg) {
-	  return typeof arg === 'number';
-	}
-
-	function isObject(arg) {
-	  return typeof arg === 'object' && arg !== null;
-	}
-
-	function isUndefined(arg) {
-	  return arg === void 0;
-	}
-
-
-/***/ },
-/* 37 */
+/* 29 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global, process) {// Copyright Joyent, Inc. and other Node contributors.
@@ -19729,7 +11333,7 @@ var stellar =
 	}
 	exports.isPrimitive = isPrimitive;
 
-	exports.isBuffer = __webpack_require__(56);
+	exports.isBuffer = __webpack_require__(45);
 
 	function objectToString(o) {
 	  return Object.prototype.toString.call(o);
@@ -19773,7 +11377,7 @@ var stellar =
 	 *     prototype.
 	 * @param {function} superCtor Constructor function to inherit prototype from.
 	 */
-	exports.inherits = __webpack_require__(62);
+	exports.inherits = __webpack_require__(50);
 
 	exports._extend = function(origin, add) {
 	  // Don't do anything if add isn't an object
@@ -19791,125 +11395,1634 @@ var stellar =
 	  return Object.prototype.hasOwnProperty.call(obj, prop);
 	}
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(57)))
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(46)))
 
 /***/ },
-/* 38 */
+/* 30 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/**
-	 * Logging functionality for ripple-lib and any applications built on it.
-	 */
-	function Log(namespace) {
-	  if (!namespace) {
-	    this._namespace = [];
-	  } else if (Array.isArray(namespace)) {
-	    this._namespace = namespace;
+	// Copyright Joyent, Inc. and other Node contributors.
+	//
+	// Permission is hereby granted, free of charge, to any person obtaining a
+	// copy of this software and associated documentation files (the
+	// "Software"), to deal in the Software without restriction, including
+	// without limitation the rights to use, copy, modify, merge, publish,
+	// distribute, sublicense, and/or sell copies of the Software, and to permit
+	// persons to whom the Software is furnished to do so, subject to the
+	// following conditions:
+	//
+	// The above copyright notice and this permission notice shall be included
+	// in all copies or substantial portions of the Software.
+	//
+	// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+	// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+	// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+	// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+	// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+	// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+	function EventEmitter() {
+	  this._events = this._events || {};
+	  this._maxListeners = this._maxListeners || undefined;
+	}
+	module.exports = EventEmitter;
+
+	// Backwards-compat with node 0.10.x
+	EventEmitter.EventEmitter = EventEmitter;
+
+	EventEmitter.prototype._events = undefined;
+	EventEmitter.prototype._maxListeners = undefined;
+
+	// By default EventEmitters will print a warning if more than 10 listeners are
+	// added to it. This is a useful default which helps finding memory leaks.
+	EventEmitter.defaultMaxListeners = 10;
+
+	// Obviously not all Emitters should be limited to 10. This function allows
+	// that to be increased. Set to zero for unlimited.
+	EventEmitter.prototype.setMaxListeners = function(n) {
+	  if (!isNumber(n) || n < 0 || isNaN(n))
+	    throw TypeError('n must be a positive number');
+	  this._maxListeners = n;
+	  return this;
+	};
+
+	EventEmitter.prototype.emit = function(type) {
+	  var er, handler, len, args, i, listeners;
+
+	  if (!this._events)
+	    this._events = {};
+
+	  // If there is no 'error' event listener then throw.
+	  if (type === 'error') {
+	    if (!this._events.error ||
+	        (isObject(this._events.error) && !this._events.error.length)) {
+	      er = arguments[1];
+	      if (er instanceof Error) {
+	        throw er; // Unhandled 'error' event
+	      } else {
+	        throw TypeError('Uncaught, unspecified "error" event.');
+	      }
+	      return false;
+	    }
+	  }
+
+	  handler = this._events[type];
+
+	  if (isUndefined(handler))
+	    return false;
+
+	  if (isFunction(handler)) {
+	    switch (arguments.length) {
+	      // fast cases
+	      case 1:
+	        handler.call(this);
+	        break;
+	      case 2:
+	        handler.call(this, arguments[1]);
+	        break;
+	      case 3:
+	        handler.call(this, arguments[1], arguments[2]);
+	        break;
+	      // slower
+	      default:
+	        len = arguments.length;
+	        args = new Array(len - 1);
+	        for (i = 1; i < len; i++)
+	          args[i - 1] = arguments[i];
+	        handler.apply(this, args);
+	    }
+	  } else if (isObject(handler)) {
+	    len = arguments.length;
+	    args = new Array(len - 1);
+	    for (i = 1; i < len; i++)
+	      args[i - 1] = arguments[i];
+
+	    listeners = handler.slice();
+	    len = listeners.length;
+	    for (i = 0; i < len; i++)
+	      listeners[i].apply(this, args);
+	  }
+
+	  return true;
+	};
+
+	EventEmitter.prototype.addListener = function(type, listener) {
+	  var m;
+
+	  if (!isFunction(listener))
+	    throw TypeError('listener must be a function');
+
+	  if (!this._events)
+	    this._events = {};
+
+	  // To avoid recursion in the case that type === "newListener"! Before
+	  // adding it to the listeners, first emit "newListener".
+	  if (this._events.newListener)
+	    this.emit('newListener', type,
+	              isFunction(listener.listener) ?
+	              listener.listener : listener);
+
+	  if (!this._events[type])
+	    // Optimize the case of one listener. Don't need the extra array object.
+	    this._events[type] = listener;
+	  else if (isObject(this._events[type]))
+	    // If we've already got an array, just append.
+	    this._events[type].push(listener);
+	  else
+	    // Adding the second element, need to change to array.
+	    this._events[type] = [this._events[type], listener];
+
+	  // Check for listener leak
+	  if (isObject(this._events[type]) && !this._events[type].warned) {
+	    var m;
+	    if (!isUndefined(this._maxListeners)) {
+	      m = this._maxListeners;
+	    } else {
+	      m = EventEmitter.defaultMaxListeners;
+	    }
+
+	    if (m && m > 0 && this._events[type].length > m) {
+	      this._events[type].warned = true;
+	      console.error('(node) warning: possible EventEmitter memory ' +
+	                    'leak detected. %d listeners added. ' +
+	                    'Use emitter.setMaxListeners() to increase limit.',
+	                    this._events[type].length);
+	      if (typeof console.trace === 'function') {
+	        // not supported in IE 10
+	        console.trace();
+	      }
+	    }
+	  }
+
+	  return this;
+	};
+
+	EventEmitter.prototype.on = EventEmitter.prototype.addListener;
+
+	EventEmitter.prototype.once = function(type, listener) {
+	  if (!isFunction(listener))
+	    throw TypeError('listener must be a function');
+
+	  var fired = false;
+
+	  function g() {
+	    this.removeListener(type, g);
+
+	    if (!fired) {
+	      fired = true;
+	      listener.apply(this, arguments);
+	    }
+	  }
+
+	  g.listener = listener;
+	  this.on(type, g);
+
+	  return this;
+	};
+
+	// emits a 'removeListener' event iff the listener was removed
+	EventEmitter.prototype.removeListener = function(type, listener) {
+	  var list, position, length, i;
+
+	  if (!isFunction(listener))
+	    throw TypeError('listener must be a function');
+
+	  if (!this._events || !this._events[type])
+	    return this;
+
+	  list = this._events[type];
+	  length = list.length;
+	  position = -1;
+
+	  if (list === listener ||
+	      (isFunction(list.listener) && list.listener === listener)) {
+	    delete this._events[type];
+	    if (this._events.removeListener)
+	      this.emit('removeListener', type, listener);
+
+	  } else if (isObject(list)) {
+	    for (i = length; i-- > 0;) {
+	      if (list[i] === listener ||
+	          (list[i].listener && list[i].listener === listener)) {
+	        position = i;
+	        break;
+	      }
+	    }
+
+	    if (position < 0)
+	      return this;
+
+	    if (list.length === 1) {
+	      list.length = 0;
+	      delete this._events[type];
+	    } else {
+	      list.splice(position, 1);
+	    }
+
+	    if (this._events.removeListener)
+	      this.emit('removeListener', type, listener);
+	  }
+
+	  return this;
+	};
+
+	EventEmitter.prototype.removeAllListeners = function(type) {
+	  var key, listeners;
+
+	  if (!this._events)
+	    return this;
+
+	  // not listening for removeListener, no need to emit
+	  if (!this._events.removeListener) {
+	    if (arguments.length === 0)
+	      this._events = {};
+	    else if (this._events[type])
+	      delete this._events[type];
+	    return this;
+	  }
+
+	  // emit removeListener for all listeners on all events
+	  if (arguments.length === 0) {
+	    for (key in this._events) {
+	      if (key === 'removeListener') continue;
+	      this.removeAllListeners(key);
+	    }
+	    this.removeAllListeners('removeListener');
+	    this._events = {};
+	    return this;
+	  }
+
+	  listeners = this._events[type];
+
+	  if (isFunction(listeners)) {
+	    this.removeListener(type, listeners);
 	  } else {
-	    this._namespace = [''+namespace];
+	    // LIFO order
+	    while (listeners.length)
+	      this.removeListener(type, listeners[listeners.length - 1]);
 	  }
+	  delete this._events[type];
 
-	  this._prefix = this._namespace.concat(['']).join(': ');
+	  return this;
 	};
 
-	/**
-	 * Create a sub-logger.
-	 *
-	 * You can have a hierarchy of loggers.
-	 *
-	 * @example
-	 *
-	 *   var log = require('ripple').log.sub('server');
-	 *
-	 *   log.info('connection successful');
-	 *   // prints: 'server: connection successful'
-	 */
-	Log.prototype.sub = function(namespace) {
-	  var subNamespace = this._namespace.slice();
-
-	  if (namespace && typeof namespace === 'string') {
-	    subNamespace.push(namespace);
-	  }
-
-	  var subLogger = new Log(subNamespace);
-	  subLogger._setParent(this);
-	  return subLogger;
+	EventEmitter.prototype.listeners = function(type) {
+	  var ret;
+	  if (!this._events || !this._events[type])
+	    ret = [];
+	  else if (isFunction(this._events[type]))
+	    ret = [this._events[type]];
+	  else
+	    ret = this._events[type].slice();
+	  return ret;
 	};
 
-	Log.prototype._setParent = function(parentLogger) {
-	  this._parent = parentLogger;
+	EventEmitter.listenerCount = function(emitter, type) {
+	  var ret;
+	  if (!emitter._events || !emitter._events[type])
+	    ret = 0;
+	  else if (isFunction(emitter._events[type]))
+	    ret = 1;
+	  else
+	    ret = emitter._events[type].length;
+	  return ret;
 	};
 
-	Log.makeLevel = function(level) {
-	  return function() {
-	    var args = Array.prototype.slice.call(arguments);
-	    args[0] = this._prefix + args[0];
-	    Log.engine.logObject.apply(Log, args);
-	  };
-	};
-
-	Log.prototype.debug = Log.makeLevel(1);
-	Log.prototype.info  = Log.makeLevel(2);
-	Log.prototype.warn  = Log.makeLevel(3);
-	Log.prototype.error = Log.makeLevel(4);
-
-	/**
-	 * Basic logging connector.
-	 *
-	 * This engine has no formatting and works with the most basic of 'console.log'
-	 * implementations. This is the logging engine used in Node.js.
-	 */
-	var BasicLogEngine = {
-	  logObject: function logObject(msg) {
-	    var args = Array.prototype.slice.call(arguments, 1);
-
-	    args = args.map(function(arg) {
-	      return JSON.stringify(arg, null, 2);
-	    });
-
-	    args.unshift(msg);
-
-	    console.log.apply(console, args);
-	  }
-	};
-
-	/**
-	 * Null logging connector.
-	 *
-	 * This engine simply swallows all messages. Used when console.log is not
-	 * available.
-	 */
-	var NullLogEngine = {
-	  logObject: function() {}
-	};
-
-	Log.engine = NullLogEngine;
-
-	if (console && console.log) {
-	  Log.engine = BasicLogEngine;
+	function isFunction(arg) {
+	  return typeof arg === 'function';
 	}
 
-	/**
-	 * Provide a root logger as our main export.
-	 *
-	 * This means you can use the logger easily on the fly:
-	 *     ripple.log.debug('My object is', myObj);
-	 */
-	module.exports = new Log();
+	function isNumber(arg) {
+	  return typeof arg === 'number';
+	}
 
-	/**
-	 * This is the logger for ripple-lib internally.
-	 */
-	module.exports.internal = module.exports.sub();
+	function isObject(arg) {
+	  return typeof arg === 'object' && arg !== null;
+	}
 
-	/**
-	 * Expose the class as well.
-	 */
-	module.exports.Log = Log;
+	function isUndefined(arg) {
+	  return arg === void 0;
+	}
 
 
 /***/ },
-/* 39 */
+/* 31 */
+/***/ function(module, exports, __webpack_require__) {
+
+	(function(){
+	    
+	    // Copyright (c) 2005  Tom Wu
+	    // All Rights Reserved.
+	    // See "LICENSE" for details.
+
+	    // Basic JavaScript BN library - subset useful for RSA encryption.
+
+	    // Bits per digit
+	    var dbits;
+
+	    // JavaScript engine analysis
+	    var canary = 0xdeadbeefcafe;
+	    var j_lm = ((canary&0xffffff)==0xefcafe);
+
+	    // (public) Constructor
+	    function BigInteger(a,b,c) {
+	      if(a != null)
+	        if("number" == typeof a) this.fromNumber(a,b,c);
+	        else if(b == null && "string" != typeof a) this.fromString(a,256);
+	        else this.fromString(a,b);
+	    }
+
+	    // return new, unset BigInteger
+	    function nbi() { return new BigInteger(null); }
+
+	    // am: Compute w_j += (x*this_i), propagate carries,
+	    // c is initial carry, returns final carry.
+	    // c < 3*dvalue, x < 2*dvalue, this_i < dvalue
+	    // We need to select the fastest one that works in this environment.
+
+	    // am1: use a single mult and divide to get the high bits,
+	    // max digit bits should be 26 because
+	    // max internal value = 2*dvalue^2-2*dvalue (< 2^53)
+	    function am1(i,x,w,j,c,n) {
+	      while(--n >= 0) {
+	        var v = x*this[i++]+w[j]+c;
+	        c = Math.floor(v/0x4000000);
+	        w[j++] = v&0x3ffffff;
+	      }
+	      return c;
+	    }
+	    // am2 avoids a big mult-and-extract completely.
+	    // Max digit bits should be <= 30 because we do bitwise ops
+	    // on values up to 2*hdvalue^2-hdvalue-1 (< 2^31)
+	    function am2(i,x,w,j,c,n) {
+	      var xl = x&0x7fff, xh = x>>15;
+	      while(--n >= 0) {
+	        var l = this[i]&0x7fff;
+	        var h = this[i++]>>15;
+	        var m = xh*l+h*xl;
+	        l = xl*l+((m&0x7fff)<<15)+w[j]+(c&0x3fffffff);
+	        c = (l>>>30)+(m>>>15)+xh*h+(c>>>30);
+	        w[j++] = l&0x3fffffff;
+	      }
+	      return c;
+	    }
+	    // Alternately, set max digit bits to 28 since some
+	    // browsers slow down when dealing with 32-bit numbers.
+	    function am3(i,x,w,j,c,n) {
+	      var xl = x&0x3fff, xh = x>>14;
+	      while(--n >= 0) {
+	        var l = this[i]&0x3fff;
+	        var h = this[i++]>>14;
+	        var m = xh*l+h*xl;
+	        l = xl*l+((m&0x3fff)<<14)+w[j]+c;
+	        c = (l>>28)+(m>>14)+xh*h;
+	        w[j++] = l&0xfffffff;
+	      }
+	      return c;
+	    }
+	    var inBrowser = typeof navigator !== "undefined";
+	    if(inBrowser && j_lm && (navigator.appName == "Microsoft Internet Explorer")) {
+	      BigInteger.prototype.am = am2;
+	      dbits = 30;
+	    }
+	    else if(inBrowser && j_lm && (navigator.appName != "Netscape")) {
+	      BigInteger.prototype.am = am1;
+	      dbits = 26;
+	    }
+	    else { // Mozilla/Netscape seems to prefer am3
+	      BigInteger.prototype.am = am3;
+	      dbits = 28;
+	    }
+
+	    BigInteger.prototype.DB = dbits;
+	    BigInteger.prototype.DM = ((1<<dbits)-1);
+	    BigInteger.prototype.DV = (1<<dbits);
+
+	    var BI_FP = 52;
+	    BigInteger.prototype.FV = Math.pow(2,BI_FP);
+	    BigInteger.prototype.F1 = BI_FP-dbits;
+	    BigInteger.prototype.F2 = 2*dbits-BI_FP;
+
+	    // Digit conversions
+	    var BI_RM = "0123456789abcdefghijklmnopqrstuvwxyz";
+	    var BI_RC = new Array();
+	    var rr,vv;
+	    rr = "0".charCodeAt(0);
+	    for(vv = 0; vv <= 9; ++vv) BI_RC[rr++] = vv;
+	    rr = "a".charCodeAt(0);
+	    for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
+	    rr = "A".charCodeAt(0);
+	    for(vv = 10; vv < 36; ++vv) BI_RC[rr++] = vv;
+
+	    function int2char(n) { return BI_RM.charAt(n); }
+	    function intAt(s,i) {
+	      var c = BI_RC[s.charCodeAt(i)];
+	      return (c==null)?-1:c;
+	    }
+
+	    // (protected) copy this to r
+	    function bnpCopyTo(r) {
+	      for(var i = this.t-1; i >= 0; --i) r[i] = this[i];
+	      r.t = this.t;
+	      r.s = this.s;
+	    }
+
+	    // (protected) set from integer value x, -DV <= x < DV
+	    function bnpFromInt(x) {
+	      this.t = 1;
+	      this.s = (x<0)?-1:0;
+	      if(x > 0) this[0] = x;
+	      else if(x < -1) this[0] = x+DV;
+	      else this.t = 0;
+	    }
+
+	    // return bigint initialized to value
+	    function nbv(i) { var r = nbi(); r.fromInt(i); return r; }
+
+	    // (protected) set from string and radix
+	    function bnpFromString(s,b) {
+	      var k;
+	      if(b == 16) k = 4;
+	      else if(b == 8) k = 3;
+	      else if(b == 256) k = 8; // byte array
+	      else if(b == 2) k = 1;
+	      else if(b == 32) k = 5;
+	      else if(b == 4) k = 2;
+	      else { this.fromRadix(s,b); return; }
+	      this.t = 0;
+	      this.s = 0;
+	      var i = s.length, mi = false, sh = 0;
+	      while(--i >= 0) {
+	        var x = (k==8)?s[i]&0xff:intAt(s,i);
+	        if(x < 0) {
+	          if(s.charAt(i) == "-") mi = true;
+	          continue;
+	        }
+	        mi = false;
+	        if(sh == 0)
+	          this[this.t++] = x;
+	        else if(sh+k > this.DB) {
+	          this[this.t-1] |= (x&((1<<(this.DB-sh))-1))<<sh;
+	          this[this.t++] = (x>>(this.DB-sh));
+	        }
+	        else
+	          this[this.t-1] |= x<<sh;
+	        sh += k;
+	        if(sh >= this.DB) sh -= this.DB;
+	      }
+	      if(k == 8 && (s[0]&0x80) != 0) {
+	        this.s = -1;
+	        if(sh > 0) this[this.t-1] |= ((1<<(this.DB-sh))-1)<<sh;
+	      }
+	      this.clamp();
+	      if(mi) BigInteger.ZERO.subTo(this,this);
+	    }
+
+	    // (protected) clamp off excess high words
+	    function bnpClamp() {
+	      var c = this.s&this.DM;
+	      while(this.t > 0 && this[this.t-1] == c) --this.t;
+	    }
+
+	    // (public) return string representation in given radix
+	    function bnToString(b) {
+	      if(this.s < 0) return "-"+this.negate().toString(b);
+	      var k;
+	      if(b == 16) k = 4;
+	      else if(b == 8) k = 3;
+	      else if(b == 2) k = 1;
+	      else if(b == 32) k = 5;
+	      else if(b == 4) k = 2;
+	      else return this.toRadix(b);
+	      var km = (1<<k)-1, d, m = false, r = "", i = this.t;
+	      var p = this.DB-(i*this.DB)%k;
+	      if(i-- > 0) {
+	        if(p < this.DB && (d = this[i]>>p) > 0) { m = true; r = int2char(d); }
+	        while(i >= 0) {
+	          if(p < k) {
+	            d = (this[i]&((1<<p)-1))<<(k-p);
+	            d |= this[--i]>>(p+=this.DB-k);
+	          }
+	          else {
+	            d = (this[i]>>(p-=k))&km;
+	            if(p <= 0) { p += this.DB; --i; }
+	          }
+	          if(d > 0) m = true;
+	          if(m) r += int2char(d);
+	        }
+	      }
+	      return m?r:"0";
+	    }
+
+	    // (public) -this
+	    function bnNegate() { var r = nbi(); BigInteger.ZERO.subTo(this,r); return r; }
+
+	    // (public) |this|
+	    function bnAbs() { return (this.s<0)?this.negate():this; }
+
+	    // (public) return + if this > a, - if this < a, 0 if equal
+	    function bnCompareTo(a) {
+	      var r = this.s-a.s;
+	      if(r != 0) return r;
+	      var i = this.t;
+	      r = i-a.t;
+	      if(r != 0) return (this.s<0)?-r:r;
+	      while(--i >= 0) if((r=this[i]-a[i]) != 0) return r;
+	      return 0;
+	    }
+
+	    // returns bit length of the integer x
+	    function nbits(x) {
+	      var r = 1, t;
+	      if((t=x>>>16) != 0) { x = t; r += 16; }
+	      if((t=x>>8) != 0) { x = t; r += 8; }
+	      if((t=x>>4) != 0) { x = t; r += 4; }
+	      if((t=x>>2) != 0) { x = t; r += 2; }
+	      if((t=x>>1) != 0) { x = t; r += 1; }
+	      return r;
+	    }
+
+	    // (public) return the number of bits in "this"
+	    function bnBitLength() {
+	      if(this.t <= 0) return 0;
+	      return this.DB*(this.t-1)+nbits(this[this.t-1]^(this.s&this.DM));
+	    }
+
+	    // (protected) r = this << n*DB
+	    function bnpDLShiftTo(n,r) {
+	      var i;
+	      for(i = this.t-1; i >= 0; --i) r[i+n] = this[i];
+	      for(i = n-1; i >= 0; --i) r[i] = 0;
+	      r.t = this.t+n;
+	      r.s = this.s;
+	    }
+
+	    // (protected) r = this >> n*DB
+	    function bnpDRShiftTo(n,r) {
+	      for(var i = n; i < this.t; ++i) r[i-n] = this[i];
+	      r.t = Math.max(this.t-n,0);
+	      r.s = this.s;
+	    }
+
+	    // (protected) r = this << n
+	    function bnpLShiftTo(n,r) {
+	      var bs = n%this.DB;
+	      var cbs = this.DB-bs;
+	      var bm = (1<<cbs)-1;
+	      var ds = Math.floor(n/this.DB), c = (this.s<<bs)&this.DM, i;
+	      for(i = this.t-1; i >= 0; --i) {
+	        r[i+ds+1] = (this[i]>>cbs)|c;
+	        c = (this[i]&bm)<<bs;
+	      }
+	      for(i = ds-1; i >= 0; --i) r[i] = 0;
+	      r[ds] = c;
+	      r.t = this.t+ds+1;
+	      r.s = this.s;
+	      r.clamp();
+	    }
+
+	    // (protected) r = this >> n
+	    function bnpRShiftTo(n,r) {
+	      r.s = this.s;
+	      var ds = Math.floor(n/this.DB);
+	      if(ds >= this.t) { r.t = 0; return; }
+	      var bs = n%this.DB;
+	      var cbs = this.DB-bs;
+	      var bm = (1<<bs)-1;
+	      r[0] = this[ds]>>bs;
+	      for(var i = ds+1; i < this.t; ++i) {
+	        r[i-ds-1] |= (this[i]&bm)<<cbs;
+	        r[i-ds] = this[i]>>bs;
+	      }
+	      if(bs > 0) r[this.t-ds-1] |= (this.s&bm)<<cbs;
+	      r.t = this.t-ds;
+	      r.clamp();
+	    }
+
+	    // (protected) r = this - a
+	    function bnpSubTo(a,r) {
+	      var i = 0, c = 0, m = Math.min(a.t,this.t);
+	      while(i < m) {
+	        c += this[i]-a[i];
+	        r[i++] = c&this.DM;
+	        c >>= this.DB;
+	      }
+	      if(a.t < this.t) {
+	        c -= a.s;
+	        while(i < this.t) {
+	          c += this[i];
+	          r[i++] = c&this.DM;
+	          c >>= this.DB;
+	        }
+	        c += this.s;
+	      }
+	      else {
+	        c += this.s;
+	        while(i < a.t) {
+	          c -= a[i];
+	          r[i++] = c&this.DM;
+	          c >>= this.DB;
+	        }
+	        c -= a.s;
+	      }
+	      r.s = (c<0)?-1:0;
+	      if(c < -1) r[i++] = this.DV+c;
+	      else if(c > 0) r[i++] = c;
+	      r.t = i;
+	      r.clamp();
+	    }
+
+	    // (protected) r = this * a, r != this,a (HAC 14.12)
+	    // "this" should be the larger one if appropriate.
+	    function bnpMultiplyTo(a,r) {
+	      var x = this.abs(), y = a.abs();
+	      var i = x.t;
+	      r.t = i+y.t;
+	      while(--i >= 0) r[i] = 0;
+	      for(i = 0; i < y.t; ++i) r[i+x.t] = x.am(0,y[i],r,i,0,x.t);
+	      r.s = 0;
+	      r.clamp();
+	      if(this.s != a.s) BigInteger.ZERO.subTo(r,r);
+	    }
+
+	    // (protected) r = this^2, r != this (HAC 14.16)
+	    function bnpSquareTo(r) {
+	      var x = this.abs();
+	      var i = r.t = 2*x.t;
+	      while(--i >= 0) r[i] = 0;
+	      for(i = 0; i < x.t-1; ++i) {
+	        var c = x.am(i,x[i],r,2*i,0,1);
+	        if((r[i+x.t]+=x.am(i+1,2*x[i],r,2*i+1,c,x.t-i-1)) >= x.DV) {
+	          r[i+x.t] -= x.DV;
+	          r[i+x.t+1] = 1;
+	        }
+	      }
+	      if(r.t > 0) r[r.t-1] += x.am(i,x[i],r,2*i,0,1);
+	      r.s = 0;
+	      r.clamp();
+	    }
+
+	    // (protected) divide this by m, quotient and remainder to q, r (HAC 14.20)
+	    // r != q, this != m.  q or r may be null.
+	    function bnpDivRemTo(m,q,r) {
+	      var pm = m.abs();
+	      if(pm.t <= 0) return;
+	      var pt = this.abs();
+	      if(pt.t < pm.t) {
+	        if(q != null) q.fromInt(0);
+	        if(r != null) this.copyTo(r);
+	        return;
+	      }
+	      if(r == null) r = nbi();
+	      var y = nbi(), ts = this.s, ms = m.s;
+	      var nsh = this.DB-nbits(pm[pm.t-1]);   // normalize modulus
+	      if(nsh > 0) { pm.lShiftTo(nsh,y); pt.lShiftTo(nsh,r); }
+	      else { pm.copyTo(y); pt.copyTo(r); }
+	      var ys = y.t;
+	      var y0 = y[ys-1];
+	      if(y0 == 0) return;
+	      var yt = y0*(1<<this.F1)+((ys>1)?y[ys-2]>>this.F2:0);
+	      var d1 = this.FV/yt, d2 = (1<<this.F1)/yt, e = 1<<this.F2;
+	      var i = r.t, j = i-ys, t = (q==null)?nbi():q;
+	      y.dlShiftTo(j,t);
+	      if(r.compareTo(t) >= 0) {
+	        r[r.t++] = 1;
+	        r.subTo(t,r);
+	      }
+	      BigInteger.ONE.dlShiftTo(ys,t);
+	      t.subTo(y,y);  // "negative" y so we can replace sub with am later
+	      while(y.t < ys) y[y.t++] = 0;
+	      while(--j >= 0) {
+	        // Estimate quotient digit
+	        var qd = (r[--i]==y0)?this.DM:Math.floor(r[i]*d1+(r[i-1]+e)*d2);
+	        if((r[i]+=y.am(0,qd,r,j,0,ys)) < qd) {   // Try it out
+	          y.dlShiftTo(j,t);
+	          r.subTo(t,r);
+	          while(r[i] < --qd) r.subTo(t,r);
+	        }
+	      }
+	      if(q != null) {
+	        r.drShiftTo(ys,q);
+	        if(ts != ms) BigInteger.ZERO.subTo(q,q);
+	      }
+	      r.t = ys;
+	      r.clamp();
+	      if(nsh > 0) r.rShiftTo(nsh,r); // Denormalize remainder
+	      if(ts < 0) BigInteger.ZERO.subTo(r,r);
+	    }
+
+	    // (public) this mod a
+	    function bnMod(a) {
+	      var r = nbi();
+	      this.abs().divRemTo(a,null,r);
+	      if(this.s < 0 && r.compareTo(BigInteger.ZERO) > 0) a.subTo(r,r);
+	      return r;
+	    }
+
+	    // Modular reduction using "classic" algorithm
+	    function Classic(m) { this.m = m; }
+	    function cConvert(x) {
+	      if(x.s < 0 || x.compareTo(this.m) >= 0) return x.mod(this.m);
+	      else return x;
+	    }
+	    function cRevert(x) { return x; }
+	    function cReduce(x) { x.divRemTo(this.m,null,x); }
+	    function cMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
+	    function cSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
+
+	    Classic.prototype.convert = cConvert;
+	    Classic.prototype.revert = cRevert;
+	    Classic.prototype.reduce = cReduce;
+	    Classic.prototype.mulTo = cMulTo;
+	    Classic.prototype.sqrTo = cSqrTo;
+
+	    // (protected) return "-1/this % 2^DB"; useful for Mont. reduction
+	    // justification:
+	    //         xy == 1 (mod m)
+	    //         xy =  1+km
+	    //   xy(2-xy) = (1+km)(1-km)
+	    // x[y(2-xy)] = 1-k^2m^2
+	    // x[y(2-xy)] == 1 (mod m^2)
+	    // if y is 1/x mod m, then y(2-xy) is 1/x mod m^2
+	    // should reduce x and y(2-xy) by m^2 at each step to keep size bounded.
+	    // JS multiply "overflows" differently from C/C++, so care is needed here.
+	    function bnpInvDigit() {
+	      if(this.t < 1) return 0;
+	      var x = this[0];
+	      if((x&1) == 0) return 0;
+	      var y = x&3;       // y == 1/x mod 2^2
+	      y = (y*(2-(x&0xf)*y))&0xf; // y == 1/x mod 2^4
+	      y = (y*(2-(x&0xff)*y))&0xff;   // y == 1/x mod 2^8
+	      y = (y*(2-(((x&0xffff)*y)&0xffff)))&0xffff;    // y == 1/x mod 2^16
+	      // last step - calculate inverse mod DV directly;
+	      // assumes 16 < DB <= 32 and assumes ability to handle 48-bit ints
+	      y = (y*(2-x*y%this.DV))%this.DV;       // y == 1/x mod 2^dbits
+	      // we really want the negative inverse, and -DV < y < DV
+	      return (y>0)?this.DV-y:-y;
+	    }
+
+	    // Montgomery reduction
+	    function Montgomery(m) {
+	      this.m = m;
+	      this.mp = m.invDigit();
+	      this.mpl = this.mp&0x7fff;
+	      this.mph = this.mp>>15;
+	      this.um = (1<<(m.DB-15))-1;
+	      this.mt2 = 2*m.t;
+	    }
+
+	    // xR mod m
+	    function montConvert(x) {
+	      var r = nbi();
+	      x.abs().dlShiftTo(this.m.t,r);
+	      r.divRemTo(this.m,null,r);
+	      if(x.s < 0 && r.compareTo(BigInteger.ZERO) > 0) this.m.subTo(r,r);
+	      return r;
+	    }
+
+	    // x/R mod m
+	    function montRevert(x) {
+	      var r = nbi();
+	      x.copyTo(r);
+	      this.reduce(r);
+	      return r;
+	    }
+
+	    // x = x/R mod m (HAC 14.32)
+	    function montReduce(x) {
+	      while(x.t <= this.mt2) // pad x so am has enough room later
+	        x[x.t++] = 0;
+	      for(var i = 0; i < this.m.t; ++i) {
+	        // faster way of calculating u0 = x[i]*mp mod DV
+	        var j = x[i]&0x7fff;
+	        var u0 = (j*this.mpl+(((j*this.mph+(x[i]>>15)*this.mpl)&this.um)<<15))&x.DM;
+	        // use am to combine the multiply-shift-add into one call
+	        j = i+this.m.t;
+	        x[j] += this.m.am(0,u0,x,i,0,this.m.t);
+	        // propagate carry
+	        while(x[j] >= x.DV) { x[j] -= x.DV; x[++j]++; }
+	      }
+	      x.clamp();
+	      x.drShiftTo(this.m.t,x);
+	      if(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
+	    }
+
+	    // r = "x^2/R mod m"; x != r
+	    function montSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
+
+	    // r = "xy/R mod m"; x,y != r
+	    function montMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
+
+	    Montgomery.prototype.convert = montConvert;
+	    Montgomery.prototype.revert = montRevert;
+	    Montgomery.prototype.reduce = montReduce;
+	    Montgomery.prototype.mulTo = montMulTo;
+	    Montgomery.prototype.sqrTo = montSqrTo;
+
+	    // (protected) true iff this is even
+	    function bnpIsEven() { return ((this.t>0)?(this[0]&1):this.s) == 0; }
+
+	    // (protected) this^e, e < 2^32, doing sqr and mul with "r" (HAC 14.79)
+	    function bnpExp(e,z) {
+	      if(e > 0xffffffff || e < 1) return BigInteger.ONE;
+	      var r = nbi(), r2 = nbi(), g = z.convert(this), i = nbits(e)-1;
+	      g.copyTo(r);
+	      while(--i >= 0) {
+	        z.sqrTo(r,r2);
+	        if((e&(1<<i)) > 0) z.mulTo(r2,g,r);
+	        else { var t = r; r = r2; r2 = t; }
+	      }
+	      return z.revert(r);
+	    }
+
+	    // (public) this^e % m, 0 <= e < 2^32
+	    function bnModPowInt(e,m) {
+	      var z;
+	      if(e < 256 || m.isEven()) z = new Classic(m); else z = new Montgomery(m);
+	      return this.exp(e,z);
+	    }
+
+	    // protected
+	    BigInteger.prototype.copyTo = bnpCopyTo;
+	    BigInteger.prototype.fromInt = bnpFromInt;
+	    BigInteger.prototype.fromString = bnpFromString;
+	    BigInteger.prototype.clamp = bnpClamp;
+	    BigInteger.prototype.dlShiftTo = bnpDLShiftTo;
+	    BigInteger.prototype.drShiftTo = bnpDRShiftTo;
+	    BigInteger.prototype.lShiftTo = bnpLShiftTo;
+	    BigInteger.prototype.rShiftTo = bnpRShiftTo;
+	    BigInteger.prototype.subTo = bnpSubTo;
+	    BigInteger.prototype.multiplyTo = bnpMultiplyTo;
+	    BigInteger.prototype.squareTo = bnpSquareTo;
+	    BigInteger.prototype.divRemTo = bnpDivRemTo;
+	    BigInteger.prototype.invDigit = bnpInvDigit;
+	    BigInteger.prototype.isEven = bnpIsEven;
+	    BigInteger.prototype.exp = bnpExp;
+
+	    // public
+	    BigInteger.prototype.toString = bnToString;
+	    BigInteger.prototype.negate = bnNegate;
+	    BigInteger.prototype.abs = bnAbs;
+	    BigInteger.prototype.compareTo = bnCompareTo;
+	    BigInteger.prototype.bitLength = bnBitLength;
+	    BigInteger.prototype.mod = bnMod;
+	    BigInteger.prototype.modPowInt = bnModPowInt;
+
+	    // "constants"
+	    BigInteger.ZERO = nbv(0);
+	    BigInteger.ONE = nbv(1);
+
+	    // Copyright (c) 2005-2009  Tom Wu
+	    // All Rights Reserved.
+	    // See "LICENSE" for details.
+
+	    // Extended JavaScript BN functions, required for RSA private ops.
+
+	    // Version 1.1: new BigInteger("0", 10) returns "proper" zero
+	    // Version 1.2: square() API, isProbablePrime fix
+
+	    // (public)
+	    function bnClone() { var r = nbi(); this.copyTo(r); return r; }
+
+	    // (public) return value as integer
+	    function bnIntValue() {
+	      if(this.s < 0) {
+	        if(this.t == 1) return this[0]-this.DV;
+	        else if(this.t == 0) return -1;
+	      }
+	      else if(this.t == 1) return this[0];
+	      else if(this.t == 0) return 0;
+	      // assumes 16 < DB < 32
+	      return ((this[1]&((1<<(32-this.DB))-1))<<this.DB)|this[0];
+	    }
+
+	    // (public) return value as byte
+	    function bnByteValue() { return (this.t==0)?this.s:(this[0]<<24)>>24; }
+
+	    // (public) return value as short (assumes DB>=16)
+	    function bnShortValue() { return (this.t==0)?this.s:(this[0]<<16)>>16; }
+
+	    // (protected) return x s.t. r^x < DV
+	    function bnpChunkSize(r) { return Math.floor(Math.LN2*this.DB/Math.log(r)); }
+
+	    // (public) 0 if this == 0, 1 if this > 0
+	    function bnSigNum() {
+	      if(this.s < 0) return -1;
+	      else if(this.t <= 0 || (this.t == 1 && this[0] <= 0)) return 0;
+	      else return 1;
+	    }
+
+	    // (protected) convert to radix string
+	    function bnpToRadix(b) {
+	      if(b == null) b = 10;
+	      if(this.signum() == 0 || b < 2 || b > 36) return "0";
+	      var cs = this.chunkSize(b);
+	      var a = Math.pow(b,cs);
+	      var d = nbv(a), y = nbi(), z = nbi(), r = "";
+	      this.divRemTo(d,y,z);
+	      while(y.signum() > 0) {
+	        r = (a+z.intValue()).toString(b).substr(1) + r;
+	        y.divRemTo(d,y,z);
+	      }
+	      return z.intValue().toString(b) + r;
+	    }
+
+	    // (protected) convert from radix string
+	    function bnpFromRadix(s,b) {
+	      this.fromInt(0);
+	      if(b == null) b = 10;
+	      var cs = this.chunkSize(b);
+	      var d = Math.pow(b,cs), mi = false, j = 0, w = 0;
+	      for(var i = 0; i < s.length; ++i) {
+	        var x = intAt(s,i);
+	        if(x < 0) {
+	          if(s.charAt(i) == "-" && this.signum() == 0) mi = true;
+	          continue;
+	        }
+	        w = b*w+x;
+	        if(++j >= cs) {
+	          this.dMultiply(d);
+	          this.dAddOffset(w,0);
+	          j = 0;
+	          w = 0;
+	        }
+	      }
+	      if(j > 0) {
+	        this.dMultiply(Math.pow(b,j));
+	        this.dAddOffset(w,0);
+	      }
+	      if(mi) BigInteger.ZERO.subTo(this,this);
+	    }
+
+	    // (protected) alternate constructor
+	    function bnpFromNumber(a,b,c) {
+	      if("number" == typeof b) {
+	        // new BigInteger(int,int,RNG)
+	        if(a < 2) this.fromInt(1);
+	        else {
+	          this.fromNumber(a,c);
+	          if(!this.testBit(a-1))	// force MSB set
+	            this.bitwiseTo(BigInteger.ONE.shiftLeft(a-1),op_or,this);
+	          if(this.isEven()) this.dAddOffset(1,0); // force odd
+	          while(!this.isProbablePrime(b)) {
+	            this.dAddOffset(2,0);
+	            if(this.bitLength() > a) this.subTo(BigInteger.ONE.shiftLeft(a-1),this);
+	          }
+	        }
+	      }
+	      else {
+	        // new BigInteger(int,RNG)
+	        var x = new Array(), t = a&7;
+	        x.length = (a>>3)+1;
+	        b.nextBytes(x);
+	        if(t > 0) x[0] &= ((1<<t)-1); else x[0] = 0;
+	        this.fromString(x,256);
+	      }
+	    }
+
+	    // (public) convert to bigendian byte array
+	    function bnToByteArray() {
+	      var i = this.t, r = new Array();
+	      r[0] = this.s;
+	      var p = this.DB-(i*this.DB)%8, d, k = 0;
+	      if(i-- > 0) {
+	        if(p < this.DB && (d = this[i]>>p) != (this.s&this.DM)>>p)
+	          r[k++] = d|(this.s<<(this.DB-p));
+	        while(i >= 0) {
+	          if(p < 8) {
+	            d = (this[i]&((1<<p)-1))<<(8-p);
+	            d |= this[--i]>>(p+=this.DB-8);
+	          }
+	          else {
+	            d = (this[i]>>(p-=8))&0xff;
+	            if(p <= 0) { p += this.DB; --i; }
+	          }
+	          if((d&0x80) != 0) d |= -256;
+	          if(k == 0 && (this.s&0x80) != (d&0x80)) ++k;
+	          if(k > 0 || d != this.s) r[k++] = d;
+	        }
+	      }
+	      return r;
+	    }
+
+	    function bnEquals(a) { return(this.compareTo(a)==0); }
+	    function bnMin(a) { return(this.compareTo(a)<0)?this:a; }
+	    function bnMax(a) { return(this.compareTo(a)>0)?this:a; }
+
+	    // (protected) r = this op a (bitwise)
+	    function bnpBitwiseTo(a,op,r) {
+	      var i, f, m = Math.min(a.t,this.t);
+	      for(i = 0; i < m; ++i) r[i] = op(this[i],a[i]);
+	      if(a.t < this.t) {
+	        f = a.s&this.DM;
+	        for(i = m; i < this.t; ++i) r[i] = op(this[i],f);
+	        r.t = this.t;
+	      }
+	      else {
+	        f = this.s&this.DM;
+	        for(i = m; i < a.t; ++i) r[i] = op(f,a[i]);
+	        r.t = a.t;
+	      }
+	      r.s = op(this.s,a.s);
+	      r.clamp();
+	    }
+
+	    // (public) this & a
+	    function op_and(x,y) { return x&y; }
+	    function bnAnd(a) { var r = nbi(); this.bitwiseTo(a,op_and,r); return r; }
+
+	    // (public) this | a
+	    function op_or(x,y) { return x|y; }
+	    function bnOr(a) { var r = nbi(); this.bitwiseTo(a,op_or,r); return r; }
+
+	    // (public) this ^ a
+	    function op_xor(x,y) { return x^y; }
+	    function bnXor(a) { var r = nbi(); this.bitwiseTo(a,op_xor,r); return r; }
+
+	    // (public) this & ~a
+	    function op_andnot(x,y) { return x&~y; }
+	    function bnAndNot(a) { var r = nbi(); this.bitwiseTo(a,op_andnot,r); return r; }
+
+	    // (public) ~this
+	    function bnNot() {
+	      var r = nbi();
+	      for(var i = 0; i < this.t; ++i) r[i] = this.DM&~this[i];
+	      r.t = this.t;
+	      r.s = ~this.s;
+	      return r;
+	    }
+
+	    // (public) this << n
+	    function bnShiftLeft(n) {
+	      var r = nbi();
+	      if(n < 0) this.rShiftTo(-n,r); else this.lShiftTo(n,r);
+	      return r;
+	    }
+
+	    // (public) this >> n
+	    function bnShiftRight(n) {
+	      var r = nbi();
+	      if(n < 0) this.lShiftTo(-n,r); else this.rShiftTo(n,r);
+	      return r;
+	    }
+
+	    // return index of lowest 1-bit in x, x < 2^31
+	    function lbit(x) {
+	      if(x == 0) return -1;
+	      var r = 0;
+	      if((x&0xffff) == 0) { x >>= 16; r += 16; }
+	      if((x&0xff) == 0) { x >>= 8; r += 8; }
+	      if((x&0xf) == 0) { x >>= 4; r += 4; }
+	      if((x&3) == 0) { x >>= 2; r += 2; }
+	      if((x&1) == 0) ++r;
+	      return r;
+	    }
+
+	    // (public) returns index of lowest 1-bit (or -1 if none)
+	    function bnGetLowestSetBit() {
+	      for(var i = 0; i < this.t; ++i)
+	        if(this[i] != 0) return i*this.DB+lbit(this[i]);
+	      if(this.s < 0) return this.t*this.DB;
+	      return -1;
+	    }
+
+	    // return number of 1 bits in x
+	    function cbit(x) {
+	      var r = 0;
+	      while(x != 0) { x &= x-1; ++r; }
+	      return r;
+	    }
+
+	    // (public) return number of set bits
+	    function bnBitCount() {
+	      var r = 0, x = this.s&this.DM;
+	      for(var i = 0; i < this.t; ++i) r += cbit(this[i]^x);
+	      return r;
+	    }
+
+	    // (public) true iff nth bit is set
+	    function bnTestBit(n) {
+	      var j = Math.floor(n/this.DB);
+	      if(j >= this.t) return(this.s!=0);
+	      return((this[j]&(1<<(n%this.DB)))!=0);
+	    }
+
+	    // (protected) this op (1<<n)
+	    function bnpChangeBit(n,op) {
+	      var r = BigInteger.ONE.shiftLeft(n);
+	      this.bitwiseTo(r,op,r);
+	      return r;
+	    }
+
+	    // (public) this | (1<<n)
+	    function bnSetBit(n) { return this.changeBit(n,op_or); }
+
+	    // (public) this & ~(1<<n)
+	    function bnClearBit(n) { return this.changeBit(n,op_andnot); }
+
+	    // (public) this ^ (1<<n)
+	    function bnFlipBit(n) { return this.changeBit(n,op_xor); }
+
+	    // (protected) r = this + a
+	    function bnpAddTo(a,r) {
+	      var i = 0, c = 0, m = Math.min(a.t,this.t);
+	      while(i < m) {
+	        c += this[i]+a[i];
+	        r[i++] = c&this.DM;
+	        c >>= this.DB;
+	      }
+	      if(a.t < this.t) {
+	        c += a.s;
+	        while(i < this.t) {
+	          c += this[i];
+	          r[i++] = c&this.DM;
+	          c >>= this.DB;
+	        }
+	        c += this.s;
+	      }
+	      else {
+	        c += this.s;
+	        while(i < a.t) {
+	          c += a[i];
+	          r[i++] = c&this.DM;
+	          c >>= this.DB;
+	        }
+	        c += a.s;
+	      }
+	      r.s = (c<0)?-1:0;
+	      if(c > 0) r[i++] = c;
+	      else if(c < -1) r[i++] = this.DV+c;
+	      r.t = i;
+	      r.clamp();
+	    }
+
+	    // (public) this + a
+	    function bnAdd(a) { var r = nbi(); this.addTo(a,r); return r; }
+
+	    // (public) this - a
+	    function bnSubtract(a) { var r = nbi(); this.subTo(a,r); return r; }
+
+	    // (public) this * a
+	    function bnMultiply(a) { var r = nbi(); this.multiplyTo(a,r); return r; }
+
+	    // (public) this^2
+	    function bnSquare() { var r = nbi(); this.squareTo(r); return r; }
+
+	    // (public) this / a
+	    function bnDivide(a) { var r = nbi(); this.divRemTo(a,r,null); return r; }
+
+	    // (public) this % a
+	    function bnRemainder(a) { var r = nbi(); this.divRemTo(a,null,r); return r; }
+
+	    // (public) [this/a,this%a]
+	    function bnDivideAndRemainder(a) {
+	      var q = nbi(), r = nbi();
+	      this.divRemTo(a,q,r);
+	      return new Array(q,r);
+	    }
+
+	    // (protected) this *= n, this >= 0, 1 < n < DV
+	    function bnpDMultiply(n) {
+	      this[this.t] = this.am(0,n-1,this,0,0,this.t);
+	      ++this.t;
+	      this.clamp();
+	    }
+
+	    // (protected) this += n << w words, this >= 0
+	    function bnpDAddOffset(n,w) {
+	      if(n == 0) return;
+	      while(this.t <= w) this[this.t++] = 0;
+	      this[w] += n;
+	      while(this[w] >= this.DV) {
+	        this[w] -= this.DV;
+	        if(++w >= this.t) this[this.t++] = 0;
+	        ++this[w];
+	      }
+	    }
+
+	    // A "null" reducer
+	    function NullExp() {}
+	    function nNop(x) { return x; }
+	    function nMulTo(x,y,r) { x.multiplyTo(y,r); }
+	    function nSqrTo(x,r) { x.squareTo(r); }
+
+	    NullExp.prototype.convert = nNop;
+	    NullExp.prototype.revert = nNop;
+	    NullExp.prototype.mulTo = nMulTo;
+	    NullExp.prototype.sqrTo = nSqrTo;
+
+	    // (public) this^e
+	    function bnPow(e) { return this.exp(e,new NullExp()); }
+
+	    // (protected) r = lower n words of "this * a", a.t <= n
+	    // "this" should be the larger one if appropriate.
+	    function bnpMultiplyLowerTo(a,n,r) {
+	      var i = Math.min(this.t+a.t,n);
+	      r.s = 0; // assumes a,this >= 0
+	      r.t = i;
+	      while(i > 0) r[--i] = 0;
+	      var j;
+	      for(j = r.t-this.t; i < j; ++i) r[i+this.t] = this.am(0,a[i],r,i,0,this.t);
+	      for(j = Math.min(a.t,n); i < j; ++i) this.am(0,a[i],r,i,0,n-i);
+	      r.clamp();
+	    }
+
+	    // (protected) r = "this * a" without lower n words, n > 0
+	    // "this" should be the larger one if appropriate.
+	    function bnpMultiplyUpperTo(a,n,r) {
+	      --n;
+	      var i = r.t = this.t+a.t-n;
+	      r.s = 0; // assumes a,this >= 0
+	      while(--i >= 0) r[i] = 0;
+	      for(i = Math.max(n-this.t,0); i < a.t; ++i)
+	        r[this.t+i-n] = this.am(n-i,a[i],r,0,0,this.t+i-n);
+	      r.clamp();
+	      r.drShiftTo(1,r);
+	    }
+
+	    // Barrett modular reduction
+	    function Barrett(m) {
+	      // setup Barrett
+	      this.r2 = nbi();
+	      this.q3 = nbi();
+	      BigInteger.ONE.dlShiftTo(2*m.t,this.r2);
+	      this.mu = this.r2.divide(m);
+	      this.m = m;
+	    }
+
+	    function barrettConvert(x) {
+	      if(x.s < 0 || x.t > 2*this.m.t) return x.mod(this.m);
+	      else if(x.compareTo(this.m) < 0) return x;
+	      else { var r = nbi(); x.copyTo(r); this.reduce(r); return r; }
+	    }
+
+	    function barrettRevert(x) { return x; }
+
+	    // x = x mod m (HAC 14.42)
+	    function barrettReduce(x) {
+	      x.drShiftTo(this.m.t-1,this.r2);
+	      if(x.t > this.m.t+1) { x.t = this.m.t+1; x.clamp(); }
+	      this.mu.multiplyUpperTo(this.r2,this.m.t+1,this.q3);
+	      this.m.multiplyLowerTo(this.q3,this.m.t+1,this.r2);
+	      while(x.compareTo(this.r2) < 0) x.dAddOffset(1,this.m.t+1);
+	      x.subTo(this.r2,x);
+	      while(x.compareTo(this.m) >= 0) x.subTo(this.m,x);
+	    }
+
+	    // r = x^2 mod m; x != r
+	    function barrettSqrTo(x,r) { x.squareTo(r); this.reduce(r); }
+
+	    // r = x*y mod m; x,y != r
+	    function barrettMulTo(x,y,r) { x.multiplyTo(y,r); this.reduce(r); }
+
+	    Barrett.prototype.convert = barrettConvert;
+	    Barrett.prototype.revert = barrettRevert;
+	    Barrett.prototype.reduce = barrettReduce;
+	    Barrett.prototype.mulTo = barrettMulTo;
+	    Barrett.prototype.sqrTo = barrettSqrTo;
+
+	    // (public) this^e % m (HAC 14.85)
+	    function bnModPow(e,m) {
+	      var i = e.bitLength(), k, r = nbv(1), z;
+	      if(i <= 0) return r;
+	      else if(i < 18) k = 1;
+	      else if(i < 48) k = 3;
+	      else if(i < 144) k = 4;
+	      else if(i < 768) k = 5;
+	      else k = 6;
+	      if(i < 8)
+	        z = new Classic(m);
+	      else if(m.isEven())
+	        z = new Barrett(m);
+	      else
+	        z = new Montgomery(m);
+
+	      // precomputation
+	      var g = new Array(), n = 3, k1 = k-1, km = (1<<k)-1;
+	      g[1] = z.convert(this);
+	      if(k > 1) {
+	        var g2 = nbi();
+	        z.sqrTo(g[1],g2);
+	        while(n <= km) {
+	          g[n] = nbi();
+	          z.mulTo(g2,g[n-2],g[n]);
+	          n += 2;
+	        }
+	      }
+
+	      var j = e.t-1, w, is1 = true, r2 = nbi(), t;
+	      i = nbits(e[j])-1;
+	      while(j >= 0) {
+	        if(i >= k1) w = (e[j]>>(i-k1))&km;
+	        else {
+	          w = (e[j]&((1<<(i+1))-1))<<(k1-i);
+	          if(j > 0) w |= e[j-1]>>(this.DB+i-k1);
+	        }
+
+	        n = k;
+	        while((w&1) == 0) { w >>= 1; --n; }
+	        if((i -= n) < 0) { i += this.DB; --j; }
+	        if(is1) {	// ret == 1, don't bother squaring or multiplying it
+	          g[w].copyTo(r);
+	          is1 = false;
+	        }
+	        else {
+	          while(n > 1) { z.sqrTo(r,r2); z.sqrTo(r2,r); n -= 2; }
+	          if(n > 0) z.sqrTo(r,r2); else { t = r; r = r2; r2 = t; }
+	          z.mulTo(r2,g[w],r);
+	        }
+
+	        while(j >= 0 && (e[j]&(1<<i)) == 0) {
+	          z.sqrTo(r,r2); t = r; r = r2; r2 = t;
+	          if(--i < 0) { i = this.DB-1; --j; }
+	        }
+	      }
+	      return z.revert(r);
+	    }
+
+	    // (public) gcd(this,a) (HAC 14.54)
+	    function bnGCD(a) {
+	      var x = (this.s<0)?this.negate():this.clone();
+	      var y = (a.s<0)?a.negate():a.clone();
+	      if(x.compareTo(y) < 0) { var t = x; x = y; y = t; }
+	      var i = x.getLowestSetBit(), g = y.getLowestSetBit();
+	      if(g < 0) return x;
+	      if(i < g) g = i;
+	      if(g > 0) {
+	        x.rShiftTo(g,x);
+	        y.rShiftTo(g,y);
+	      }
+	      while(x.signum() > 0) {
+	        if((i = x.getLowestSetBit()) > 0) x.rShiftTo(i,x);
+	        if((i = y.getLowestSetBit()) > 0) y.rShiftTo(i,y);
+	        if(x.compareTo(y) >= 0) {
+	          x.subTo(y,x);
+	          x.rShiftTo(1,x);
+	        }
+	        else {
+	          y.subTo(x,y);
+	          y.rShiftTo(1,y);
+	        }
+	      }
+	      if(g > 0) y.lShiftTo(g,y);
+	      return y;
+	    }
+
+	    // (protected) this % n, n < 2^26
+	    function bnpModInt(n) {
+	      if(n <= 0) return 0;
+	      var d = this.DV%n, r = (this.s<0)?n-1:0;
+	      if(this.t > 0)
+	        if(d == 0) r = this[0]%n;
+	        else for(var i = this.t-1; i >= 0; --i) r = (d*r+this[i])%n;
+	      return r;
+	    }
+
+	    // (public) 1/this % m (HAC 14.61)
+	    function bnModInverse(m) {
+	      var ac = m.isEven();
+	      if((this.isEven() && ac) || m.signum() == 0) return BigInteger.ZERO;
+	      var u = m.clone(), v = this.clone();
+	      var a = nbv(1), b = nbv(0), c = nbv(0), d = nbv(1);
+	      while(u.signum() != 0) {
+	        while(u.isEven()) {
+	          u.rShiftTo(1,u);
+	          if(ac) {
+	            if(!a.isEven() || !b.isEven()) { a.addTo(this,a); b.subTo(m,b); }
+	            a.rShiftTo(1,a);
+	          }
+	          else if(!b.isEven()) b.subTo(m,b);
+	          b.rShiftTo(1,b);
+	        }
+	        while(v.isEven()) {
+	          v.rShiftTo(1,v);
+	          if(ac) {
+	            if(!c.isEven() || !d.isEven()) { c.addTo(this,c); d.subTo(m,d); }
+	            c.rShiftTo(1,c);
+	          }
+	          else if(!d.isEven()) d.subTo(m,d);
+	          d.rShiftTo(1,d);
+	        }
+	        if(u.compareTo(v) >= 0) {
+	          u.subTo(v,u);
+	          if(ac) a.subTo(c,a);
+	          b.subTo(d,b);
+	        }
+	        else {
+	          v.subTo(u,v);
+	          if(ac) c.subTo(a,c);
+	          d.subTo(b,d);
+	        }
+	      }
+	      if(v.compareTo(BigInteger.ONE) != 0) return BigInteger.ZERO;
+	      if(d.compareTo(m) >= 0) return d.subtract(m);
+	      if(d.signum() < 0) d.addTo(m,d); else return d;
+	      if(d.signum() < 0) return d.add(m); else return d;
+	    }
+
+	    var lowprimes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,191,193,197,199,211,223,227,229,233,239,241,251,257,263,269,271,277,281,283,293,307,311,313,317,331,337,347,349,353,359,367,373,379,383,389,397,401,409,419,421,431,433,439,443,449,457,461,463,467,479,487,491,499,503,509,521,523,541,547,557,563,569,571,577,587,593,599,601,607,613,617,619,631,641,643,647,653,659,661,673,677,683,691,701,709,719,727,733,739,743,751,757,761,769,773,787,797,809,811,821,823,827,829,839,853,857,859,863,877,881,883,887,907,911,919,929,937,941,947,953,967,971,977,983,991,997];
+	    var lplim = (1<<26)/lowprimes[lowprimes.length-1];
+
+	    // (public) test primality with certainty >= 1-.5^t
+	    function bnIsProbablePrime(t) {
+	      var i, x = this.abs();
+	      if(x.t == 1 && x[0] <= lowprimes[lowprimes.length-1]) {
+	        for(i = 0; i < lowprimes.length; ++i)
+	          if(x[0] == lowprimes[i]) return true;
+	        return false;
+	      }
+	      if(x.isEven()) return false;
+	      i = 1;
+	      while(i < lowprimes.length) {
+	        var m = lowprimes[i], j = i+1;
+	        while(j < lowprimes.length && m < lplim) m *= lowprimes[j++];
+	        m = x.modInt(m);
+	        while(i < j) if(m%lowprimes[i++] == 0) return false;
+	      }
+	      return x.millerRabin(t);
+	    }
+
+	    // (protected) true if probably prime (HAC 4.24, Miller-Rabin)
+	    function bnpMillerRabin(t) {
+	      var n1 = this.subtract(BigInteger.ONE);
+	      var k = n1.getLowestSetBit();
+	      if(k <= 0) return false;
+	      var r = n1.shiftRight(k);
+	      t = (t+1)>>1;
+	      if(t > lowprimes.length) t = lowprimes.length;
+	      var a = nbi();
+	      for(var i = 0; i < t; ++i) {
+	        //Pick bases at random, instead of starting at 2
+	        a.fromInt(lowprimes[Math.floor(Math.random()*lowprimes.length)]);
+	        var y = a.modPow(r,this);
+	        if(y.compareTo(BigInteger.ONE) != 0 && y.compareTo(n1) != 0) {
+	          var j = 1;
+	          while(j++ < k && y.compareTo(n1) != 0) {
+	            y = y.modPowInt(2,this);
+	            if(y.compareTo(BigInteger.ONE) == 0) return false;
+	          }
+	          if(y.compareTo(n1) != 0) return false;
+	        }
+	      }
+	      return true;
+	    }
+
+	    // protected
+	    BigInteger.prototype.chunkSize = bnpChunkSize;
+	    BigInteger.prototype.toRadix = bnpToRadix;
+	    BigInteger.prototype.fromRadix = bnpFromRadix;
+	    BigInteger.prototype.fromNumber = bnpFromNumber;
+	    BigInteger.prototype.bitwiseTo = bnpBitwiseTo;
+	    BigInteger.prototype.changeBit = bnpChangeBit;
+	    BigInteger.prototype.addTo = bnpAddTo;
+	    BigInteger.prototype.dMultiply = bnpDMultiply;
+	    BigInteger.prototype.dAddOffset = bnpDAddOffset;
+	    BigInteger.prototype.multiplyLowerTo = bnpMultiplyLowerTo;
+	    BigInteger.prototype.multiplyUpperTo = bnpMultiplyUpperTo;
+	    BigInteger.prototype.modInt = bnpModInt;
+	    BigInteger.prototype.millerRabin = bnpMillerRabin;
+
+	    // public
+	    BigInteger.prototype.clone = bnClone;
+	    BigInteger.prototype.intValue = bnIntValue;
+	    BigInteger.prototype.byteValue = bnByteValue;
+	    BigInteger.prototype.shortValue = bnShortValue;
+	    BigInteger.prototype.signum = bnSigNum;
+	    BigInteger.prototype.toByteArray = bnToByteArray;
+	    BigInteger.prototype.equals = bnEquals;
+	    BigInteger.prototype.min = bnMin;
+	    BigInteger.prototype.max = bnMax;
+	    BigInteger.prototype.and = bnAnd;
+	    BigInteger.prototype.or = bnOr;
+	    BigInteger.prototype.xor = bnXor;
+	    BigInteger.prototype.andNot = bnAndNot;
+	    BigInteger.prototype.not = bnNot;
+	    BigInteger.prototype.shiftLeft = bnShiftLeft;
+	    BigInteger.prototype.shiftRight = bnShiftRight;
+	    BigInteger.prototype.getLowestSetBit = bnGetLowestSetBit;
+	    BigInteger.prototype.bitCount = bnBitCount;
+	    BigInteger.prototype.testBit = bnTestBit;
+	    BigInteger.prototype.setBit = bnSetBit;
+	    BigInteger.prototype.clearBit = bnClearBit;
+	    BigInteger.prototype.flipBit = bnFlipBit;
+	    BigInteger.prototype.add = bnAdd;
+	    BigInteger.prototype.subtract = bnSubtract;
+	    BigInteger.prototype.multiply = bnMultiply;
+	    BigInteger.prototype.divide = bnDivide;
+	    BigInteger.prototype.remainder = bnRemainder;
+	    BigInteger.prototype.divideAndRemainder = bnDivideAndRemainder;
+	    BigInteger.prototype.modPow = bnModPow;
+	    BigInteger.prototype.modInverse = bnModInverse;
+	    BigInteger.prototype.pow = bnPow;
+	    BigInteger.prototype.gcd = bnGCD;
+	    BigInteger.prototype.isProbablePrime = bnIsProbablePrime;
+
+	    // JSBN-specific extension
+	    BigInteger.prototype.square = bnSquare;
+
+	    // BigInteger interfaces not implemented in jsbn:
+
+	    // BigInteger(int signum, byte[] magnitude)
+	    // double doubleValue()
+	    // float floatValue()
+	    // int hashCode()
+	    // long longValue()
+	    // static BigInteger valueOf(long val)
+	    if (true) {
+	        exports = module.exports = BigInteger;
+	    } else {
+	        this.BigInteger = BigInteger;
+	    }
+	    
+	}).call(this);
+
+/***/ },
+/* 32 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var hasOwn = Object.prototype.hasOwnProperty;
+	var toString = Object.prototype.toString;
+
+	function isPlainObject(obj) {
+		if (!obj || toString.call(obj) !== '[object Object]' || obj.nodeType || obj.setInterval)
+			return false;
+
+		var has_own_constructor = hasOwn.call(obj, 'constructor');
+		var has_is_property_of_method = hasOwn.call(obj.constructor.prototype, 'isPrototypeOf');
+		// Not own constructor property must be Object
+		if (obj.constructor && !has_own_constructor && !has_is_property_of_method)
+			return false;
+
+		// Own properties are enumerated firstly, so to speed up,
+		// if last one is own, then all properties are own.
+		var key;
+		for ( key in obj ) {}
+
+		return key === undefined || hasOwn.call( obj, key );
+	};
+
+	module.exports = function extend() {
+		var options, name, src, copy, copyIsArray, clone,
+		    target = arguments[0] || {},
+		    i = 1,
+		    length = arguments.length,
+		    deep = false;
+
+		// Handle a deep copy situation
+		if ( typeof target === "boolean" ) {
+			deep = target;
+			target = arguments[1] || {};
+			// skip the boolean and the target
+			i = 2;
+		}
+
+		// Handle case when target is a string or something (possible in deep copy)
+		if ( typeof target !== "object" && typeof target !== "function") {
+			target = {};
+		}
+
+		for ( ; i < length; i++ ) {
+			// Only deal with non-null/undefined values
+			if ( (options = arguments[ i ]) != null ) {
+				// Extend the base object
+				for ( name in options ) {
+					src = target[ name ];
+					copy = options[ name ];
+
+					// Prevent never-ending loop
+					if ( target === copy ) {
+						continue;
+					}
+
+					// Recurse if we're merging plain objects or arrays
+					if ( deep && copy && ( isPlainObject(copy) || (copyIsArray = Array.isArray(copy)) ) ) {
+						if ( copyIsArray ) {
+							copyIsArray = false;
+							clone = src && Array.isArray(src) ? src : [];
+
+						} else {
+							clone = src && isPlainObject(src) ? src : {};
+						}
+
+						// Never move original objects, clone them
+						target[ name ] = extend( deep, clone, copy );
+
+					// Don't bring in undefined values
+					} else if ( copy !== undefined ) {
+						target[ name ] = copy;
+					}
+				}
+			}
+		}
+
+		// Return the modified object
+		return target;
+	};
+
+
+/***/ },
+/* 33 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// http://wiki.commonjs.org/wiki/Unit_Testing/1.0
@@ -19939,7 +13052,7 @@ var stellar =
 	// when used in node, this will actually load the util module we depend on
 	// versus loading the builtin util module as happens otherwise
 	// this is a bug in node module loading as far as I am concerned
-	var util = __webpack_require__(63);
+	var util = __webpack_require__(51);
 
 	var pSlice = Array.prototype.slice;
 	var hasOwn = Object.prototype.hasOwnProperty;
@@ -20275,7 +13388,7 @@ var stellar =
 
 
 /***/ },
-/* 40 */
+/* 34 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer) {/*!
@@ -20285,8 +13398,8 @@ var stellar =
 	 * @license  MIT
 	 */
 
-	var base64 = __webpack_require__(66)
-	var ieee754 = __webpack_require__(60)
+	var base64 = __webpack_require__(58)
+	var ieee754 = __webpack_require__(49)
 
 	exports.Buffer = Buffer
 	exports.SlowBuffer = Buffer
@@ -21388,71 +14501,10 @@ var stellar =
 	  if (!test) throw new Error(message || 'Failed assertion')
 	}
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
 
 /***/ },
-/* 41 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(Buffer) {var rng = __webpack_require__(51)
-
-	function error () {
-	  var m = [].slice.call(arguments).join(' ')
-	  throw new Error([
-	    m,
-	    'we accept pull requests',
-	    'http://github.com/dominictarr/crypto-browserify'
-	    ].join('\n'))
-	}
-
-	exports.createHash = __webpack_require__(52)
-
-	exports.createHmac = __webpack_require__(53)
-
-	exports.randomBytes = function(size, callback) {
-	  if (callback && callback.call) {
-	    try {
-	      callback.call(this, undefined, new Buffer(rng(size)))
-	    } catch (err) { callback(err) }
-	  } else {
-	    return new Buffer(rng(size))
-	  }
-	}
-
-	function each(a, f) {
-	  for(var i in a)
-	    f(a[i], i)
-	}
-
-	exports.getHashes = function () {
-	  return ['sha1', 'sha256', 'md5', 'rmd160']
-
-	}
-
-	var p = __webpack_require__(54)(exports.createHmac)
-	exports.pbkdf2 = p.pbkdf2
-	exports.pbkdf2Sync = p.pbkdf2Sync
-
-
-	// the least I can do is make error messages for the rest of the node.js/crypto api.
-	each(['createCredentials'
-	, 'createCipher'
-	, 'createCipheriv'
-	, 'createDecipher'
-	, 'createDecipheriv'
-	, 'createSign'
-	, 'createVerify'
-	, 'createDiffieHellman'
-	], function (name) {
-	  exports[name] = function () {
-	    error('sorry,', name, 'is not implemented yet')
-	  }
-	})
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
-
-/***/ },
-/* 42 */
+/* 35 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/*jshint strict:true node:true es5:true onevar:true laxcomma:true laxbreak:true eqeqeq:true immed:true latedef:true*/
@@ -21480,7 +14532,7 @@ var stellar =
 	// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 	// USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-	var punycode = __webpack_require__(64);
+	var punycode = __webpack_require__(52);
 
 	exports.parse = urlParse;
 	exports.resolve = urlResolve;
@@ -21548,7 +14600,7 @@ var stellar =
 	      'gopher:': true,
 	      'file:': true
 	    },
-	    querystring = __webpack_require__(65);
+	    querystring = __webpack_require__(53);
 
 	function urlParse(url, parseQueryString, slashesDenoteHost) {
 	  if (url && typeof(url) === 'object' && url.href) return url;
@@ -22089,91 +15141,7 @@ var stellar =
 
 
 /***/ },
-/* 43 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var hasOwn = Object.prototype.hasOwnProperty;
-	var toString = Object.prototype.toString;
-
-	function isPlainObject(obj) {
-		if (!obj || toString.call(obj) !== '[object Object]' || obj.nodeType || obj.setInterval)
-			return false;
-
-		var has_own_constructor = hasOwn.call(obj, 'constructor');
-		var has_is_property_of_method = hasOwn.call(obj.constructor.prototype, 'isPrototypeOf');
-		// Not own constructor property must be Object
-		if (obj.constructor && !has_own_constructor && !has_is_property_of_method)
-			return false;
-
-		// Own properties are enumerated firstly, so to speed up,
-		// if last one is own, then all properties are own.
-		var key;
-		for ( key in obj ) {}
-
-		return key === undefined || hasOwn.call( obj, key );
-	};
-
-	module.exports = function extend() {
-		var options, name, src, copy, copyIsArray, clone,
-		    target = arguments[0] || {},
-		    i = 1,
-		    length = arguments.length,
-		    deep = false;
-
-		// Handle a deep copy situation
-		if ( typeof target === "boolean" ) {
-			deep = target;
-			target = arguments[1] || {};
-			// skip the boolean and the target
-			i = 2;
-		}
-
-		// Handle case when target is a string or something (possible in deep copy)
-		if ( typeof target !== "object" && typeof target !== "function") {
-			target = {};
-		}
-
-		for ( ; i < length; i++ ) {
-			// Only deal with non-null/undefined values
-			if ( (options = arguments[ i ]) != null ) {
-				// Extend the base object
-				for ( name in options ) {
-					src = target[ name ];
-					copy = options[ name ];
-
-					// Prevent never-ending loop
-					if ( target === copy ) {
-						continue;
-					}
-
-					// Recurse if we're merging plain objects or arrays
-					if ( deep && copy && ( isPlainObject(copy) || (copyIsArray = Array.isArray(copy)) ) ) {
-						if ( copyIsArray ) {
-							copyIsArray = false;
-							clone = src && Array.isArray(src) ? src : [];
-
-						} else {
-							clone = src && isPlainObject(src) ? src : {};
-						}
-
-						// Never move original objects, clone them
-						target[ name ] = extend( deep, clone, copy );
-
-					// Don't bring in undefined values
-					} else if ( copy !== undefined ) {
-						target[ name ] = copy;
-					}
-				}
-			}
-		}
-
-		// Return the modified object
-		return target;
-	};
-
-
-/***/ },
-/* 44 */
+/* 36 */
 /***/ function(module, exports, __webpack_require__) {
 
 	
@@ -22181,7 +15149,7 @@ var stellar =
 	 * Manager for pending transactions
 	 */
 
-	var LRU = __webpack_require__(47);
+	var LRU = __webpack_require__(38);
 	var Transaction = __webpack_require__(5).Transaction;
 
 	function TransactionQueue() {
@@ -22282,12 +15250,12 @@ var stellar =
 
 
 /***/ },
-/* 45 */
+/* 37 */
 /***/ function(module, exports, __webpack_require__) {
 
-	var utils  = __webpack_require__(19);
-	var extend = __webpack_require__(43);
-	var UInt   = __webpack_require__(28).UInt;
+	var utils  = __webpack_require__(16);
+	var extend = __webpack_require__(32);
+	var UInt   = __webpack_require__(24).UInt;
 
 	//
 	// UInt128 support
@@ -22311,216 +15279,7 @@ var stellar =
 
 
 /***/ },
-/* 46 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var Crypt = __webpack_require__(31).Crypt;
-	var Message = __webpack_require__(14).Message;
-	var parser  = __webpack_require__(42);
-	var querystring = __webpack_require__(50);
-	var extend = __webpack_require__(43);
-
-	var SignedRequest = function (config) {
-	  // XXX Constructor should be generalized and constructing from an Angular.js
-	  //     $http config should be a SignedRequest.from... utility method.
-	  this.config = extend(true, {}, config);
-	  if (!this.config.data) this.config.data = {};
-	};
-
-
-
-	/**
-	 * Create a string from request parameters that
-	 * will be used to sign a request
-	 * @param {Object} parsed - parsed url
-	 * @param {Object} date 
-	 * @param {Object} mechanism - type of signing
-	 */
-	SignedRequest.prototype.getStringToSign = function (parsed, date, mechanism) {
-	  // XXX This method doesn't handle signing GET requests correctly. The data
-	  //     field will be merged into the search string, not the request body.
-
-	  // Sort the properties of the JSON object into canonical form
-	  var canonicalData = JSON.stringify(copyObjectWithSortedKeys(this.config.data));
-
-	  // Canonical request using Amazon's v4 signature format
-	  // See: http://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
-	  var canonicalRequest = [
-	    this.config.method || 'GET',
-	    parsed.pathname || '',
-	    parsed.search || '',
-	    // XXX Headers signing not supported
-	    '',
-	    '',
-	    Crypt.hashSha512(canonicalData).toLowerCase()
-	  ].join('\n');
-
-	  // String to sign inspired by Amazon's v4 signature format
-	  // See: http://docs.aws.amazon.com/general/latest/gr/sigv4-create-string-to-sign.html
-	  //
-	  // We don't have a credential scope, so we skip it.
-	  //
-	  // But that modifies the format, so the format ID is RIPPLE1, instead of AWS4.
-	  return [
-	    mechanism,
-	    date,
-	    Crypt.hashSha512(canonicalRequest).toLowerCase()
-	  ].join('\n');
-	};
-
-	//prepare for signing
-	function copyObjectWithSortedKeys(object) {
-	  if (isPlainObject(object)) {
-	    var newObj = {};
-	    var keysSorted = Object.keys(object).sort();
-	    var key;
-	    for (var i in keysSorted) {
-	      key = keysSorted[i];
-	      if (Object.prototype.hasOwnProperty.call(object, key)) {
-	        newObj[key] = copyObjectWithSortedKeys(object[key]);
-	      }
-	    }
-	    return newObj;
-	  } else if (Array.isArray(object)) {
-	    return object.map(copyObjectWithSortedKeys);
-	  } else {
-	    return object;
-	  }
-	}
-
-	//from npm extend
-	function isPlainObject(obj) {
-	  var hasOwn = Object.prototype.hasOwnProperty;
-	  var toString = Object.prototype.toString;
-
-	  if (!obj || toString.call(obj) !== '[object Object]' || obj.nodeType || obj.setInterval)
-	    return false;
-
-	  var has_own_constructor = hasOwn.call(obj, 'constructor');
-	  var has_is_property_of_method = hasOwn.call(obj.constructor.prototype, 'isPrototypeOf');
-	  // Not own constructor property must be Object
-	  if (obj.constructor && !has_own_constructor && !has_is_property_of_method)
-	    return false;
-
-	  // Own properties are enumerated firstly, so to speed up,
-	  // if last one is own, then all properties are own.
-	  var key;
-	  for ( key in obj ) {}
-
-	  return key === undefined || hasOwn.call( obj, key );
-	};
-
-	/**
-	 * HMAC signed request
-	 * @param {Object} config
-	 * @param {Object} auth_secret
-	 * @param {Object} blob_id
-	 */
-	SignedRequest.prototype.signHmac = function (auth_secret, blob_id) {
-	  var config = extend(true, {}, this.config);
-
-	  // Parse URL
-	  var parsed        = parser.parse(config.url);
-	  var date          = dateAsIso8601();
-	  var signatureType = 'RIPPLE1-HMAC-SHA512';
-	  var stringToSign  = this.getStringToSign(parsed, date, signatureType);
-	  var signature     = Crypt.signString(auth_secret, stringToSign);
-
-	  var query = querystring.stringify({
-	    signature: Crypt.base64ToBase64Url(signature),
-	    signature_date: date,
-	    signature_blob_id: blob_id,
-	    signature_type: signatureType
-	  });
-
-	  config.url += (parsed.search ? '&' : '?') + query;
-	  return config;
-	};
-
-	/**
-	 * Asymmetric signed request
-	 * @param {Object} config
-	 * @param {Object} secretKey
-	 * @param {Object} account
-	 * @param {Object} blob_id
-	 */
-	SignedRequest.prototype.signAsymmetric = function (secretKey, account, blob_id) {
-	  var config = extend(true, {}, this.config);
-
-	  // Parse URL
-	  var parsed        = parser.parse(config.url);
-	  var date          = dateAsIso8601();
-	  var signatureType = 'RIPPLE1-ECDSA-SHA512';
-	  var stringToSign  = this.getStringToSign(parsed, date, signatureType);
-	  var signature     = Message.signMessage(stringToSign, secretKey);
-	 
-	  var query = querystring.stringify({
-	    signature: Crypt.base64ToBase64Url(signature),
-	    signature_date: date,
-	    signature_blob_id: blob_id,
-	    signature_account: account,
-	    signature_type: signatureType
-	  });
-
-	  config.url += (parsed.search ? '&' : '?') + query;
-
-	  return config;
-	};
-
-	/**
-	 * Asymmetric signed request for vault recovery
-	 * @param {Object} config
-	 * @param {Object} secretKey
-	 * @param {Object} username
-	 */
-	SignedRequest.prototype.signAsymmetricRecovery = function (secretKey, username) {
-	  var config = extend(true, {}, this.config);
-
-	  // Parse URL
-	  var parsed        = parser.parse(config.url);
-	  var date          = dateAsIso8601();
-	  var signatureType = 'RIPPLE1-ECDSA-SHA512';
-	  var stringToSign  = this.getStringToSign(parsed, date, signatureType);
-	  var signature     = Message.signMessage(stringToSign, secretKey);
-	 
-	  var query = querystring.stringify({
-	    signature: Crypt.base64ToBase64Url(signature),
-	    signature_date: date,
-	    signature_username: username,
-	    signature_type: signatureType
-	  });
-
-	  config.url += (parsed.search ? '&' : '?') + query;
-
-	  return config;
-	};
-
-	var dateAsIso8601 = (function () {
-	  function pad(n) {
-	    return (n < 0 || n > 9 ? "" : "0") + n;
-	  }
-
-	  return function dateAsIso8601() {
-	    var date = new Date();
-	    return date.getUTCFullYear() + "-" +
-	      pad(date.getUTCMonth()     + 1)  + "-" +
-	      pad(date.getUTCDate())     + "T" +
-	      pad(date.getUTCHours())    + ":" +
-	      pad(date.getUTCMinutes())  + ":" +
-	      pad(date.getUTCSeconds())  + ".000Z";
-	  };
-	})();
-
-	// XXX Add methods for verifying requests
-	// SignedRequest.prototype.verifySignatureHmac
-	// SignedRequest.prototype.verifySignatureAsymetric
-
-	exports.SignedRequest = SignedRequest;
-
-
-
-/***/ },
-/* 47 */
+/* 38 */
 /***/ function(module, exports, __webpack_require__) {
 
 	;(function () { // closure for web browsers
@@ -22778,7 +15537,7 @@ var stellar =
 
 
 /***/ },
-/* 48 */
+/* 39 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_DEFINE_RESULT__;/* WEBPACK VAR INJECTION */(function(process) {/*!
@@ -23905,18 +16664,67 @@ var stellar =
 
 	}());
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(57)))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(46)))
 
 /***/ },
-/* 49 */
+/* 40 */
+/***/ function(module, exports, __webpack_require__) {
+
+	
+	/**
+	 * Module dependencies.
+	 */
+
+	var global = (function() { return this; })();
+
+	/**
+	 * WebSocket constructor.
+	 */
+
+	var WebSocket = global.WebSocket || global.MozWebSocket;
+
+	/**
+	 * Module exports.
+	 */
+
+	module.exports = WebSocket ? ws : null;
+
+	/**
+	 * WebSocket constructor.
+	 *
+	 * The third `opts` options object gets ignored in web browsers, since it's
+	 * non-standard, and throws a TypeError if passed to the constructor.
+	 * See: https://github.com/einaros/ws/issues/227
+	 *
+	 * @param {String} uri
+	 * @param {Array} protocols (optional)
+	 * @param {Object) opts (optional)
+	 * @api public
+	 */
+
+	function ws(uri, protocols, opts) {
+	  var instance;
+	  if (protocols) {
+	    instance = new WebSocket(uri, protocols);
+	  } else {
+	    instance = new WebSocket(uri);
+	  }
+	  return instance;
+	}
+
+	if (WebSocket) ws.prototype = WebSocket.prototype;
+
+
+/***/ },
+/* 41 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/**
 	 * Module dependencies.
 	 */
 
-	var Emitter = __webpack_require__(67);
-	var reduce = __webpack_require__(68);
+	var Emitter = __webpack_require__(59);
+	var reduce = __webpack_require__(60);
 
 	/**
 	 * Root reference for iframes.
@@ -24963,231 +17771,17 @@ var stellar =
 
 
 /***/ },
-/* 50 */
+/* 42 */
 /***/ function(module, exports, __webpack_require__) {
 
 	'use strict';
 
-	exports.decode = exports.parse = __webpack_require__(58);
-	exports.encode = exports.stringify = __webpack_require__(59);
+	exports.decode = exports.parse = __webpack_require__(47);
+	exports.encode = exports.stringify = __webpack_require__(48);
 
 
 /***/ },
-/* 51 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(Buffer) {// Original code adapted from Robert Kieffer.
-	// details at https://github.com/broofa/node-uuid
-
-
-	(function() {
-	  var _global = this;
-
-	  var mathRNG, whatwgRNG;
-
-	  // NOTE: Math.random() does not guarantee "cryptographic quality"
-	  mathRNG = function(size) {
-	    var bytes = new Buffer(size);
-	    var r;
-
-	    for (var i = 0, r; i < size; i++) {
-	      if ((i & 0x03) == 0) r = Math.random() * 0x100000000;
-	      bytes[i] = r >>> ((i & 0x03) << 3) & 0xff;
-	    }
-
-	    return bytes;
-	  }
-
-	  if (_global.crypto && crypto.getRandomValues) {
-	    whatwgRNG = function(size) {
-	      var bytes = new Buffer(size); //in browserify, this is an extended Uint8Array
-	      crypto.getRandomValues(bytes);
-	      return bytes;
-	    }
-	  }
-
-	  module.exports = whatwgRNG || mathRNG;
-
-	}())
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
-
-/***/ },
-/* 52 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(Buffer) {var createHash = __webpack_require__(69)
-
-	var md5 = toConstructor(__webpack_require__(61))
-	var rmd160 = toConstructor(__webpack_require__(71))
-
-	function toConstructor (fn) {
-	  return function () {
-	    var buffers = []
-	    var m= {
-	      update: function (data, enc) {
-	        if(!Buffer.isBuffer(data)) data = new Buffer(data, enc)
-	        buffers.push(data)
-	        return this
-	      },
-	      digest: function (enc) {
-	        var buf = Buffer.concat(buffers)
-	        var r = fn(buf)
-	        buffers = null
-	        return enc ? r.toString(enc) : r
-	      }
-	    }
-	    return m
-	  }
-	}
-
-	module.exports = function (alg) {
-	  if('md5' === alg) return new md5()
-	  if('rmd160' === alg) return new rmd160()
-	  return createHash(alg)
-	}
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
-
-/***/ },
-/* 53 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(Buffer) {var createHash = __webpack_require__(52)
-
-	var blocksize = 64
-	var zeroBuffer = new Buffer(blocksize); zeroBuffer.fill(0)
-
-	module.exports = Hmac
-
-	function Hmac (alg, key) {
-	  if(!(this instanceof Hmac)) return new Hmac(alg, key)
-	  this._opad = opad
-	  this._alg = alg
-
-	  key = this._key = !Buffer.isBuffer(key) ? new Buffer(key) : key
-
-	  if(key.length > blocksize) {
-	    key = createHash(alg).update(key).digest()
-	  } else if(key.length < blocksize) {
-	    key = Buffer.concat([key, zeroBuffer], blocksize)
-	  }
-
-	  var ipad = this._ipad = new Buffer(blocksize)
-	  var opad = this._opad = new Buffer(blocksize)
-
-	  for(var i = 0; i < blocksize; i++) {
-	    ipad[i] = key[i] ^ 0x36
-	    opad[i] = key[i] ^ 0x5C
-	  }
-
-	  this._hash = createHash(alg).update(ipad)
-	}
-
-	Hmac.prototype.update = function (data, enc) {
-	  this._hash.update(data, enc)
-	  return this
-	}
-
-	Hmac.prototype.digest = function (enc) {
-	  var h = this._hash.digest()
-	  return createHash(this._alg).update(this._opad).update(h).digest(enc)
-	}
-
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
-
-/***/ },
-/* 54 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/* WEBPACK VAR INJECTION */(function(Buffer) {// JavaScript PBKDF2 Implementation
-	// Based on http://git.io/qsv2zw
-	// Licensed under LGPL v3
-	// Copyright (c) 2013 jduncanator
-
-	var blocksize = 64
-	var zeroBuffer = new Buffer(blocksize); zeroBuffer.fill(0)
-
-	module.exports = function (createHmac, exports) {
-	  exports = exports || {}
-
-	  exports.pbkdf2 = function(password, salt, iterations, keylen, cb) {
-	    if('function' !== typeof cb)
-	      throw new Error('No callback provided to pbkdf2');
-	    setTimeout(function () {
-	      cb(null, exports.pbkdf2Sync(password, salt, iterations, keylen))
-	    })
-	  }
-
-	  exports.pbkdf2Sync = function(key, salt, iterations, keylen) {
-	    if('number' !== typeof iterations)
-	      throw new TypeError('Iterations not a number')
-	    if(iterations < 0)
-	      throw new TypeError('Bad iterations')
-	    if('number' !== typeof keylen)
-	      throw new TypeError('Key length not a number')
-	    if(keylen < 0)
-	      throw new TypeError('Bad key length')
-
-	    //stretch key to the correct length that hmac wants it,
-	    //otherwise this will happen every time hmac is called
-	    //twice per iteration.
-	    var key = !Buffer.isBuffer(key) ? new Buffer(key) : key
-
-	    if(key.length > blocksize) {
-	      key = createHash(alg).update(key).digest()
-	    } else if(key.length < blocksize) {
-	      key = Buffer.concat([key, zeroBuffer], blocksize)
-	    }
-
-	    var HMAC;
-	    var cplen, p = 0, i = 1, itmp = new Buffer(4), digtmp;
-	    var out = new Buffer(keylen);
-	    out.fill(0);
-	    while(keylen) {
-	      if(keylen > 20)
-	        cplen = 20;
-	      else
-	        cplen = keylen;
-
-	      /* We are unlikely to ever use more than 256 blocks (5120 bits!)
-	         * but just in case...
-	         */
-	        itmp[0] = (i >> 24) & 0xff;
-	        itmp[1] = (i >> 16) & 0xff;
-	          itmp[2] = (i >> 8) & 0xff;
-	          itmp[3] = i & 0xff;
-
-	          HMAC = createHmac('sha1', key);
-	          HMAC.update(salt)
-	          HMAC.update(itmp);
-	        digtmp = HMAC.digest();
-	        digtmp.copy(out, p, 0, cplen);
-
-	        for(var j = 1; j < iterations; j++) {
-	          HMAC = createHmac('sha1', key);
-	          HMAC.update(digtmp);
-	          digtmp = HMAC.digest();
-	          for(var k = 0; k < cplen; k++) {
-	            out[k] ^= digtmp[k];
-	          }
-	        }
-	      keylen -= cplen;
-	      i++;
-	      p += cplen;
-	    }
-
-	    return out;
-	  }
-
-	  return exports
-	}
-	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
-
-/***/ },
-/* 55 */
+/* 43 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer) {(function(nacl) {
@@ -26369,7 +18963,7 @@ var stellar =
 	    }
 	  } else if (true) {
 	    // Node.js.
-	    crypto = __webpack_require__(41);
+	    crypto = __webpack_require__(44);
 	    if (crypto) {
 	      nacl.setPRNG(function(x, n) {
 	        var i, v = crypto.randomBytes(n);
@@ -26381,10 +18975,71 @@ var stellar =
 
 	})(typeof module !== 'undefined' && module.exports ? module.exports : (window.nacl = window.nacl || {}));
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
 
 /***/ },
-/* 56 */
+/* 44 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(Buffer) {var rng = __webpack_require__(54)
+
+	function error () {
+	  var m = [].slice.call(arguments).join(' ')
+	  throw new Error([
+	    m,
+	    'we accept pull requests',
+	    'http://github.com/dominictarr/crypto-browserify'
+	    ].join('\n'))
+	}
+
+	exports.createHash = __webpack_require__(55)
+
+	exports.createHmac = __webpack_require__(56)
+
+	exports.randomBytes = function(size, callback) {
+	  if (callback && callback.call) {
+	    try {
+	      callback.call(this, undefined, new Buffer(rng(size)))
+	    } catch (err) { callback(err) }
+	  } else {
+	    return new Buffer(rng(size))
+	  }
+	}
+
+	function each(a, f) {
+	  for(var i in a)
+	    f(a[i], i)
+	}
+
+	exports.getHashes = function () {
+	  return ['sha1', 'sha256', 'md5', 'rmd160']
+
+	}
+
+	var p = __webpack_require__(57)(exports.createHmac)
+	exports.pbkdf2 = p.pbkdf2
+	exports.pbkdf2Sync = p.pbkdf2Sync
+
+
+	// the least I can do is make error messages for the rest of the node.js/crypto api.
+	each(['createCredentials'
+	, 'createCipher'
+	, 'createCipheriv'
+	, 'createDecipher'
+	, 'createDecipheriv'
+	, 'createSign'
+	, 'createVerify'
+	, 'createDiffieHellman'
+	], function (name) {
+	  exports[name] = function () {
+	    error('sorry,', name, 'is not implemented yet')
+	  }
+	})
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
+
+/***/ },
+/* 45 */
 /***/ function(module, exports, __webpack_require__) {
 
 	module.exports = function isBuffer(arg) {
@@ -26395,7 +19050,7 @@ var stellar =
 	}
 
 /***/ },
-/* 57 */
+/* 46 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// shim for using process in browser
@@ -26461,7 +19116,7 @@ var stellar =
 
 
 /***/ },
-/* 58 */
+/* 47 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// Copyright Joyent, Inc. and other Node contributors.
@@ -26551,7 +19206,7 @@ var stellar =
 
 
 /***/ },
-/* 59 */
+/* 48 */
 /***/ function(module, exports, __webpack_require__) {
 
 	// Copyright Joyent, Inc. and other Node contributors.
@@ -26642,7 +19297,7 @@ var stellar =
 
 
 /***/ },
-/* 60 */
+/* 49 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.read = function(buffer, offset, isLE, mLen, nBytes) {
@@ -26732,168 +19387,7 @@ var stellar =
 
 
 /***/ },
-/* 61 */
-/***/ function(module, exports, __webpack_require__) {
-
-	/*
-	 * A JavaScript implementation of the RSA Data Security, Inc. MD5 Message
-	 * Digest Algorithm, as defined in RFC 1321.
-	 * Version 2.1 Copyright (C) Paul Johnston 1999 - 2002.
-	 * Other contributors: Greg Holt, Andrew Kepert, Ydnar, Lostinet
-	 * Distributed under the BSD License
-	 * See http://pajhome.org.uk/crypt/md5 for more info.
-	 */
-
-	var helpers = __webpack_require__(70);
-
-	/*
-	 * Calculate the MD5 of an array of little-endian words, and a bit length
-	 */
-	function core_md5(x, len)
-	{
-	  /* append padding */
-	  x[len >> 5] |= 0x80 << ((len) % 32);
-	  x[(((len + 64) >>> 9) << 4) + 14] = len;
-
-	  var a =  1732584193;
-	  var b = -271733879;
-	  var c = -1732584194;
-	  var d =  271733878;
-
-	  for(var i = 0; i < x.length; i += 16)
-	  {
-	    var olda = a;
-	    var oldb = b;
-	    var oldc = c;
-	    var oldd = d;
-
-	    a = md5_ff(a, b, c, d, x[i+ 0], 7 , -680876936);
-	    d = md5_ff(d, a, b, c, x[i+ 1], 12, -389564586);
-	    c = md5_ff(c, d, a, b, x[i+ 2], 17,  606105819);
-	    b = md5_ff(b, c, d, a, x[i+ 3], 22, -1044525330);
-	    a = md5_ff(a, b, c, d, x[i+ 4], 7 , -176418897);
-	    d = md5_ff(d, a, b, c, x[i+ 5], 12,  1200080426);
-	    c = md5_ff(c, d, a, b, x[i+ 6], 17, -1473231341);
-	    b = md5_ff(b, c, d, a, x[i+ 7], 22, -45705983);
-	    a = md5_ff(a, b, c, d, x[i+ 8], 7 ,  1770035416);
-	    d = md5_ff(d, a, b, c, x[i+ 9], 12, -1958414417);
-	    c = md5_ff(c, d, a, b, x[i+10], 17, -42063);
-	    b = md5_ff(b, c, d, a, x[i+11], 22, -1990404162);
-	    a = md5_ff(a, b, c, d, x[i+12], 7 ,  1804603682);
-	    d = md5_ff(d, a, b, c, x[i+13], 12, -40341101);
-	    c = md5_ff(c, d, a, b, x[i+14], 17, -1502002290);
-	    b = md5_ff(b, c, d, a, x[i+15], 22,  1236535329);
-
-	    a = md5_gg(a, b, c, d, x[i+ 1], 5 , -165796510);
-	    d = md5_gg(d, a, b, c, x[i+ 6], 9 , -1069501632);
-	    c = md5_gg(c, d, a, b, x[i+11], 14,  643717713);
-	    b = md5_gg(b, c, d, a, x[i+ 0], 20, -373897302);
-	    a = md5_gg(a, b, c, d, x[i+ 5], 5 , -701558691);
-	    d = md5_gg(d, a, b, c, x[i+10], 9 ,  38016083);
-	    c = md5_gg(c, d, a, b, x[i+15], 14, -660478335);
-	    b = md5_gg(b, c, d, a, x[i+ 4], 20, -405537848);
-	    a = md5_gg(a, b, c, d, x[i+ 9], 5 ,  568446438);
-	    d = md5_gg(d, a, b, c, x[i+14], 9 , -1019803690);
-	    c = md5_gg(c, d, a, b, x[i+ 3], 14, -187363961);
-	    b = md5_gg(b, c, d, a, x[i+ 8], 20,  1163531501);
-	    a = md5_gg(a, b, c, d, x[i+13], 5 , -1444681467);
-	    d = md5_gg(d, a, b, c, x[i+ 2], 9 , -51403784);
-	    c = md5_gg(c, d, a, b, x[i+ 7], 14,  1735328473);
-	    b = md5_gg(b, c, d, a, x[i+12], 20, -1926607734);
-
-	    a = md5_hh(a, b, c, d, x[i+ 5], 4 , -378558);
-	    d = md5_hh(d, a, b, c, x[i+ 8], 11, -2022574463);
-	    c = md5_hh(c, d, a, b, x[i+11], 16,  1839030562);
-	    b = md5_hh(b, c, d, a, x[i+14], 23, -35309556);
-	    a = md5_hh(a, b, c, d, x[i+ 1], 4 , -1530992060);
-	    d = md5_hh(d, a, b, c, x[i+ 4], 11,  1272893353);
-	    c = md5_hh(c, d, a, b, x[i+ 7], 16, -155497632);
-	    b = md5_hh(b, c, d, a, x[i+10], 23, -1094730640);
-	    a = md5_hh(a, b, c, d, x[i+13], 4 ,  681279174);
-	    d = md5_hh(d, a, b, c, x[i+ 0], 11, -358537222);
-	    c = md5_hh(c, d, a, b, x[i+ 3], 16, -722521979);
-	    b = md5_hh(b, c, d, a, x[i+ 6], 23,  76029189);
-	    a = md5_hh(a, b, c, d, x[i+ 9], 4 , -640364487);
-	    d = md5_hh(d, a, b, c, x[i+12], 11, -421815835);
-	    c = md5_hh(c, d, a, b, x[i+15], 16,  530742520);
-	    b = md5_hh(b, c, d, a, x[i+ 2], 23, -995338651);
-
-	    a = md5_ii(a, b, c, d, x[i+ 0], 6 , -198630844);
-	    d = md5_ii(d, a, b, c, x[i+ 7], 10,  1126891415);
-	    c = md5_ii(c, d, a, b, x[i+14], 15, -1416354905);
-	    b = md5_ii(b, c, d, a, x[i+ 5], 21, -57434055);
-	    a = md5_ii(a, b, c, d, x[i+12], 6 ,  1700485571);
-	    d = md5_ii(d, a, b, c, x[i+ 3], 10, -1894986606);
-	    c = md5_ii(c, d, a, b, x[i+10], 15, -1051523);
-	    b = md5_ii(b, c, d, a, x[i+ 1], 21, -2054922799);
-	    a = md5_ii(a, b, c, d, x[i+ 8], 6 ,  1873313359);
-	    d = md5_ii(d, a, b, c, x[i+15], 10, -30611744);
-	    c = md5_ii(c, d, a, b, x[i+ 6], 15, -1560198380);
-	    b = md5_ii(b, c, d, a, x[i+13], 21,  1309151649);
-	    a = md5_ii(a, b, c, d, x[i+ 4], 6 , -145523070);
-	    d = md5_ii(d, a, b, c, x[i+11], 10, -1120210379);
-	    c = md5_ii(c, d, a, b, x[i+ 2], 15,  718787259);
-	    b = md5_ii(b, c, d, a, x[i+ 9], 21, -343485551);
-
-	    a = safe_add(a, olda);
-	    b = safe_add(b, oldb);
-	    c = safe_add(c, oldc);
-	    d = safe_add(d, oldd);
-	  }
-	  return Array(a, b, c, d);
-
-	}
-
-	/*
-	 * These functions implement the four basic operations the algorithm uses.
-	 */
-	function md5_cmn(q, a, b, x, s, t)
-	{
-	  return safe_add(bit_rol(safe_add(safe_add(a, q), safe_add(x, t)), s),b);
-	}
-	function md5_ff(a, b, c, d, x, s, t)
-	{
-	  return md5_cmn((b & c) | ((~b) & d), a, b, x, s, t);
-	}
-	function md5_gg(a, b, c, d, x, s, t)
-	{
-	  return md5_cmn((b & d) | (c & (~d)), a, b, x, s, t);
-	}
-	function md5_hh(a, b, c, d, x, s, t)
-	{
-	  return md5_cmn(b ^ c ^ d, a, b, x, s, t);
-	}
-	function md5_ii(a, b, c, d, x, s, t)
-	{
-	  return md5_cmn(c ^ (b | (~d)), a, b, x, s, t);
-	}
-
-	/*
-	 * Add integers, wrapping at 2^32. This uses 16-bit operations internally
-	 * to work around bugs in some JS interpreters.
-	 */
-	function safe_add(x, y)
-	{
-	  var lsw = (x & 0xFFFF) + (y & 0xFFFF);
-	  var msw = (x >> 16) + (y >> 16) + (lsw >> 16);
-	  return (msw << 16) | (lsw & 0xFFFF);
-	}
-
-	/*
-	 * Bitwise rotate a 32-bit number to the left.
-	 */
-	function bit_rol(num, cnt)
-	{
-	  return (num << cnt) | (num >>> (32 - cnt));
-	}
-
-	module.exports = function md5(buf) {
-	  return helpers.hash(buf, core_md5, 16);
-	};
-
-
-/***/ },
-/* 62 */
+/* 50 */
 /***/ function(module, exports, __webpack_require__) {
 
 	if (typeof Object.create === 'function') {
@@ -26922,7 +19416,7 @@ var stellar =
 
 
 /***/ },
-/* 63 */
+/* 51 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(global, process) {// Copyright Joyent, Inc. and other Node contributors.
@@ -27450,7 +19944,7 @@ var stellar =
 	}
 	exports.isPrimitive = isPrimitive;
 
-	exports.isBuffer = __webpack_require__(72);
+	exports.isBuffer = __webpack_require__(62);
 
 	function objectToString(o) {
 	  return Object.prototype.toString.call(o);
@@ -27494,7 +19988,7 @@ var stellar =
 	 *     prototype.
 	 * @param {function} superCtor Constructor function to inherit prototype from.
 	 */
-	exports.inherits = __webpack_require__(78);
+	exports.inherits = __webpack_require__(67);
 
 	exports._extend = function(origin, add) {
 	  // Don't do anything if add isn't an object
@@ -27512,10 +20006,10 @@ var stellar =
 	  return Object.prototype.hasOwnProperty.call(obj, prop);
 	}
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(57)))
+	/* WEBPACK VAR INJECTION */}.call(exports, (function() { return this; }()), __webpack_require__(46)))
 
 /***/ },
-/* 64 */
+/* 52 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;var require;/* WEBPACK VAR INJECTION */(function(module) {/*! http://mths.be/punycode by @mathias */
@@ -27529,7 +20023,7 @@ var stellar =
 		var punycode,
 
 		/** Detect free variables `define`, `exports`, `module` and `require` */
-		freeDefine = __webpack_require__(76),
+		freeDefine = __webpack_require__(63),
 		freeExports = typeof exports == 'object' && exports,
 		freeModule = typeof module == 'object' && module,
 		freeRequire = typeof require == 'function' && require,
@@ -28020,7 +20514,7 @@ var stellar =
 					punycode.hasOwnProperty(key) && (freeExports[key] = punycode[key]);
 				}
 			}
-		} else if (__webpack_require__(76)) {
+		} else if (__webpack_require__(63)) {
 			// via curl.js or RequireJS
 			!(__WEBPACK_AMD_DEFINE_FACTORY__ = (punycode), (typeof __WEBPACK_AMD_DEFINE_FACTORY__ === 'function' ? (__WEBPACK_AMD_DEFINE_RESULT__ = __WEBPACK_AMD_DEFINE_FACTORY__.call(exports, __webpack_require__, exports, module), __WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__)) : module.exports = __WEBPACK_AMD_DEFINE_FACTORY__));
 		} else {
@@ -28029,10 +20523,10 @@ var stellar =
 		}
 
 	}(this));
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(77)(module)))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(64)(module)))
 
 /***/ },
-/* 65 */
+/* 53 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var __WEBPACK_AMD_DEFINE_RESULT__;// Copyright Joyent, Inc. and other Node contributors.
@@ -28146,7 +20640,221 @@ var stellar =
 
 
 /***/ },
-/* 66 */
+/* 54 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(Buffer) {// Original code adapted from Robert Kieffer.
+	// details at https://github.com/broofa/node-uuid
+
+
+	(function() {
+	  var _global = this;
+
+	  var mathRNG, whatwgRNG;
+
+	  // NOTE: Math.random() does not guarantee "cryptographic quality"
+	  mathRNG = function(size) {
+	    var bytes = new Buffer(size);
+	    var r;
+
+	    for (var i = 0, r; i < size; i++) {
+	      if ((i & 0x03) == 0) r = Math.random() * 0x100000000;
+	      bytes[i] = r >>> ((i & 0x03) << 3) & 0xff;
+	    }
+
+	    return bytes;
+	  }
+
+	  if (_global.crypto && crypto.getRandomValues) {
+	    whatwgRNG = function(size) {
+	      var bytes = new Buffer(size); //in browserify, this is an extended Uint8Array
+	      crypto.getRandomValues(bytes);
+	      return bytes;
+	    }
+	  }
+
+	  module.exports = whatwgRNG || mathRNG;
+
+	}())
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
+
+/***/ },
+/* 55 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(Buffer) {var createHash = __webpack_require__(65)
+
+	var md5 = toConstructor(__webpack_require__(61))
+	var rmd160 = toConstructor(__webpack_require__(68))
+
+	function toConstructor (fn) {
+	  return function () {
+	    var buffers = []
+	    var m= {
+	      update: function (data, enc) {
+	        if(!Buffer.isBuffer(data)) data = new Buffer(data, enc)
+	        buffers.push(data)
+	        return this
+	      },
+	      digest: function (enc) {
+	        var buf = Buffer.concat(buffers)
+	        var r = fn(buf)
+	        buffers = null
+	        return enc ? r.toString(enc) : r
+	      }
+	    }
+	    return m
+	  }
+	}
+
+	module.exports = function (alg) {
+	  if('md5' === alg) return new md5()
+	  if('rmd160' === alg) return new rmd160()
+	  return createHash(alg)
+	}
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
+
+/***/ },
+/* 56 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(Buffer) {var createHash = __webpack_require__(55)
+
+	var blocksize = 64
+	var zeroBuffer = new Buffer(blocksize); zeroBuffer.fill(0)
+
+	module.exports = Hmac
+
+	function Hmac (alg, key) {
+	  if(!(this instanceof Hmac)) return new Hmac(alg, key)
+	  this._opad = opad
+	  this._alg = alg
+
+	  key = this._key = !Buffer.isBuffer(key) ? new Buffer(key) : key
+
+	  if(key.length > blocksize) {
+	    key = createHash(alg).update(key).digest()
+	  } else if(key.length < blocksize) {
+	    key = Buffer.concat([key, zeroBuffer], blocksize)
+	  }
+
+	  var ipad = this._ipad = new Buffer(blocksize)
+	  var opad = this._opad = new Buffer(blocksize)
+
+	  for(var i = 0; i < blocksize; i++) {
+	    ipad[i] = key[i] ^ 0x36
+	    opad[i] = key[i] ^ 0x5C
+	  }
+
+	  this._hash = createHash(alg).update(ipad)
+	}
+
+	Hmac.prototype.update = function (data, enc) {
+	  this._hash.update(data, enc)
+	  return this
+	}
+
+	Hmac.prototype.digest = function (enc) {
+	  var h = this._hash.digest()
+	  return createHash(this._alg).update(this._opad).update(h).digest(enc)
+	}
+
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
+
+/***/ },
+/* 57 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/* WEBPACK VAR INJECTION */(function(Buffer) {// JavaScript PBKDF2 Implementation
+	// Based on http://git.io/qsv2zw
+	// Licensed under LGPL v3
+	// Copyright (c) 2013 jduncanator
+
+	var blocksize = 64
+	var zeroBuffer = new Buffer(blocksize); zeroBuffer.fill(0)
+
+	module.exports = function (createHmac, exports) {
+	  exports = exports || {}
+
+	  exports.pbkdf2 = function(password, salt, iterations, keylen, cb) {
+	    if('function' !== typeof cb)
+	      throw new Error('No callback provided to pbkdf2');
+	    setTimeout(function () {
+	      cb(null, exports.pbkdf2Sync(password, salt, iterations, keylen))
+	    })
+	  }
+
+	  exports.pbkdf2Sync = function(key, salt, iterations, keylen) {
+	    if('number' !== typeof iterations)
+	      throw new TypeError('Iterations not a number')
+	    if(iterations < 0)
+	      throw new TypeError('Bad iterations')
+	    if('number' !== typeof keylen)
+	      throw new TypeError('Key length not a number')
+	    if(keylen < 0)
+	      throw new TypeError('Bad key length')
+
+	    //stretch key to the correct length that hmac wants it,
+	    //otherwise this will happen every time hmac is called
+	    //twice per iteration.
+	    var key = !Buffer.isBuffer(key) ? new Buffer(key) : key
+
+	    if(key.length > blocksize) {
+	      key = createHash(alg).update(key).digest()
+	    } else if(key.length < blocksize) {
+	      key = Buffer.concat([key, zeroBuffer], blocksize)
+	    }
+
+	    var HMAC;
+	    var cplen, p = 0, i = 1, itmp = new Buffer(4), digtmp;
+	    var out = new Buffer(keylen);
+	    out.fill(0);
+	    while(keylen) {
+	      if(keylen > 20)
+	        cplen = 20;
+	      else
+	        cplen = keylen;
+
+	      /* We are unlikely to ever use more than 256 blocks (5120 bits!)
+	         * but just in case...
+	         */
+	        itmp[0] = (i >> 24) & 0xff;
+	        itmp[1] = (i >> 16) & 0xff;
+	          itmp[2] = (i >> 8) & 0xff;
+	          itmp[3] = i & 0xff;
+
+	          HMAC = createHmac('sha1', key);
+	          HMAC.update(salt)
+	          HMAC.update(itmp);
+	        digtmp = HMAC.digest();
+	        digtmp.copy(out, p, 0, cplen);
+
+	        for(var j = 1; j < iterations; j++) {
+	          HMAC = createHmac('sha1', key);
+	          HMAC.update(digtmp);
+	          digtmp = HMAC.digest();
+	          for(var k = 0; k < cplen; k++) {
+	            out[k] ^= digtmp[k];
+	          }
+	        }
+	      keylen -= cplen;
+	      i++;
+	      p += cplen;
+	    }
+
+	    return out;
+	  }
+
+	  return exports
+	}
+	
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
+
+/***/ },
+/* 58 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -28272,7 +20980,7 @@ var stellar =
 
 
 /***/ },
-/* 67 */
+/* 59 */
 /***/ function(module, exports, __webpack_require__) {
 
 	
@@ -28442,7 +21150,7 @@ var stellar =
 
 
 /***/ },
-/* 68 */
+/* 60 */
 /***/ function(module, exports, __webpack_require__) {
 
 	
@@ -28471,7 +21179,202 @@ var stellar =
 	};
 
 /***/ },
-/* 69 */
+/* 61 */
+/***/ function(module, exports, __webpack_require__) {
+
+	/*
+	 * A JavaScript implementation of the RSA Data Security, Inc. MD5 Message
+	 * Digest Algorithm, as defined in RFC 1321.
+	 * Version 2.1 Copyright (C) Paul Johnston 1999 - 2002.
+	 * Other contributors: Greg Holt, Andrew Kepert, Ydnar, Lostinet
+	 * Distributed under the BSD License
+	 * See http://pajhome.org.uk/crypt/md5 for more info.
+	 */
+
+	var helpers = __webpack_require__(66);
+
+	/*
+	 * Calculate the MD5 of an array of little-endian words, and a bit length
+	 */
+	function core_md5(x, len)
+	{
+	  /* append padding */
+	  x[len >> 5] |= 0x80 << ((len) % 32);
+	  x[(((len + 64) >>> 9) << 4) + 14] = len;
+
+	  var a =  1732584193;
+	  var b = -271733879;
+	  var c = -1732584194;
+	  var d =  271733878;
+
+	  for(var i = 0; i < x.length; i += 16)
+	  {
+	    var olda = a;
+	    var oldb = b;
+	    var oldc = c;
+	    var oldd = d;
+
+	    a = md5_ff(a, b, c, d, x[i+ 0], 7 , -680876936);
+	    d = md5_ff(d, a, b, c, x[i+ 1], 12, -389564586);
+	    c = md5_ff(c, d, a, b, x[i+ 2], 17,  606105819);
+	    b = md5_ff(b, c, d, a, x[i+ 3], 22, -1044525330);
+	    a = md5_ff(a, b, c, d, x[i+ 4], 7 , -176418897);
+	    d = md5_ff(d, a, b, c, x[i+ 5], 12,  1200080426);
+	    c = md5_ff(c, d, a, b, x[i+ 6], 17, -1473231341);
+	    b = md5_ff(b, c, d, a, x[i+ 7], 22, -45705983);
+	    a = md5_ff(a, b, c, d, x[i+ 8], 7 ,  1770035416);
+	    d = md5_ff(d, a, b, c, x[i+ 9], 12, -1958414417);
+	    c = md5_ff(c, d, a, b, x[i+10], 17, -42063);
+	    b = md5_ff(b, c, d, a, x[i+11], 22, -1990404162);
+	    a = md5_ff(a, b, c, d, x[i+12], 7 ,  1804603682);
+	    d = md5_ff(d, a, b, c, x[i+13], 12, -40341101);
+	    c = md5_ff(c, d, a, b, x[i+14], 17, -1502002290);
+	    b = md5_ff(b, c, d, a, x[i+15], 22,  1236535329);
+
+	    a = md5_gg(a, b, c, d, x[i+ 1], 5 , -165796510);
+	    d = md5_gg(d, a, b, c, x[i+ 6], 9 , -1069501632);
+	    c = md5_gg(c, d, a, b, x[i+11], 14,  643717713);
+	    b = md5_gg(b, c, d, a, x[i+ 0], 20, -373897302);
+	    a = md5_gg(a, b, c, d, x[i+ 5], 5 , -701558691);
+	    d = md5_gg(d, a, b, c, x[i+10], 9 ,  38016083);
+	    c = md5_gg(c, d, a, b, x[i+15], 14, -660478335);
+	    b = md5_gg(b, c, d, a, x[i+ 4], 20, -405537848);
+	    a = md5_gg(a, b, c, d, x[i+ 9], 5 ,  568446438);
+	    d = md5_gg(d, a, b, c, x[i+14], 9 , -1019803690);
+	    c = md5_gg(c, d, a, b, x[i+ 3], 14, -187363961);
+	    b = md5_gg(b, c, d, a, x[i+ 8], 20,  1163531501);
+	    a = md5_gg(a, b, c, d, x[i+13], 5 , -1444681467);
+	    d = md5_gg(d, a, b, c, x[i+ 2], 9 , -51403784);
+	    c = md5_gg(c, d, a, b, x[i+ 7], 14,  1735328473);
+	    b = md5_gg(b, c, d, a, x[i+12], 20, -1926607734);
+
+	    a = md5_hh(a, b, c, d, x[i+ 5], 4 , -378558);
+	    d = md5_hh(d, a, b, c, x[i+ 8], 11, -2022574463);
+	    c = md5_hh(c, d, a, b, x[i+11], 16,  1839030562);
+	    b = md5_hh(b, c, d, a, x[i+14], 23, -35309556);
+	    a = md5_hh(a, b, c, d, x[i+ 1], 4 , -1530992060);
+	    d = md5_hh(d, a, b, c, x[i+ 4], 11,  1272893353);
+	    c = md5_hh(c, d, a, b, x[i+ 7], 16, -155497632);
+	    b = md5_hh(b, c, d, a, x[i+10], 23, -1094730640);
+	    a = md5_hh(a, b, c, d, x[i+13], 4 ,  681279174);
+	    d = md5_hh(d, a, b, c, x[i+ 0], 11, -358537222);
+	    c = md5_hh(c, d, a, b, x[i+ 3], 16, -722521979);
+	    b = md5_hh(b, c, d, a, x[i+ 6], 23,  76029189);
+	    a = md5_hh(a, b, c, d, x[i+ 9], 4 , -640364487);
+	    d = md5_hh(d, a, b, c, x[i+12], 11, -421815835);
+	    c = md5_hh(c, d, a, b, x[i+15], 16,  530742520);
+	    b = md5_hh(b, c, d, a, x[i+ 2], 23, -995338651);
+
+	    a = md5_ii(a, b, c, d, x[i+ 0], 6 , -198630844);
+	    d = md5_ii(d, a, b, c, x[i+ 7], 10,  1126891415);
+	    c = md5_ii(c, d, a, b, x[i+14], 15, -1416354905);
+	    b = md5_ii(b, c, d, a, x[i+ 5], 21, -57434055);
+	    a = md5_ii(a, b, c, d, x[i+12], 6 ,  1700485571);
+	    d = md5_ii(d, a, b, c, x[i+ 3], 10, -1894986606);
+	    c = md5_ii(c, d, a, b, x[i+10], 15, -1051523);
+	    b = md5_ii(b, c, d, a, x[i+ 1], 21, -2054922799);
+	    a = md5_ii(a, b, c, d, x[i+ 8], 6 ,  1873313359);
+	    d = md5_ii(d, a, b, c, x[i+15], 10, -30611744);
+	    c = md5_ii(c, d, a, b, x[i+ 6], 15, -1560198380);
+	    b = md5_ii(b, c, d, a, x[i+13], 21,  1309151649);
+	    a = md5_ii(a, b, c, d, x[i+ 4], 6 , -145523070);
+	    d = md5_ii(d, a, b, c, x[i+11], 10, -1120210379);
+	    c = md5_ii(c, d, a, b, x[i+ 2], 15,  718787259);
+	    b = md5_ii(b, c, d, a, x[i+ 9], 21, -343485551);
+
+	    a = safe_add(a, olda);
+	    b = safe_add(b, oldb);
+	    c = safe_add(c, oldc);
+	    d = safe_add(d, oldd);
+	  }
+	  return Array(a, b, c, d);
+
+	}
+
+	/*
+	 * These functions implement the four basic operations the algorithm uses.
+	 */
+	function md5_cmn(q, a, b, x, s, t)
+	{
+	  return safe_add(bit_rol(safe_add(safe_add(a, q), safe_add(x, t)), s),b);
+	}
+	function md5_ff(a, b, c, d, x, s, t)
+	{
+	  return md5_cmn((b & c) | ((~b) & d), a, b, x, s, t);
+	}
+	function md5_gg(a, b, c, d, x, s, t)
+	{
+	  return md5_cmn((b & d) | (c & (~d)), a, b, x, s, t);
+	}
+	function md5_hh(a, b, c, d, x, s, t)
+	{
+	  return md5_cmn(b ^ c ^ d, a, b, x, s, t);
+	}
+	function md5_ii(a, b, c, d, x, s, t)
+	{
+	  return md5_cmn(c ^ (b | (~d)), a, b, x, s, t);
+	}
+
+	/*
+	 * Add integers, wrapping at 2^32. This uses 16-bit operations internally
+	 * to work around bugs in some JS interpreters.
+	 */
+	function safe_add(x, y)
+	{
+	  var lsw = (x & 0xFFFF) + (y & 0xFFFF);
+	  var msw = (x >> 16) + (y >> 16) + (lsw >> 16);
+	  return (msw << 16) | (lsw & 0xFFFF);
+	}
+
+	/*
+	 * Bitwise rotate a 32-bit number to the left.
+	 */
+	function bit_rol(num, cnt)
+	{
+	  return (num << cnt) | (num >>> (32 - cnt));
+	}
+
+	module.exports = function md5(buf) {
+	  return helpers.hash(buf, core_md5, 16);
+	};
+
+
+/***/ },
+/* 62 */
+/***/ function(module, exports, __webpack_require__) {
+
+	module.exports = function isBuffer(arg) {
+	  return arg && typeof arg === 'object'
+	    && typeof arg.copy === 'function'
+	    && typeof arg.fill === 'function'
+	    && typeof arg.readUInt8 === 'function';
+	}
+
+/***/ },
+/* 63 */
+/***/ function(module, exports, __webpack_require__) {
+
+	module.exports = function() { throw new Error("define cannot be used indirect"); };
+
+
+/***/ },
+/* 64 */
+/***/ function(module, exports, __webpack_require__) {
+
+	module.exports = function(module) {
+		if(!module.webpackPolyfill) {
+			module.deprecate = function() {};
+			module.paths = [];
+			// module.parent = undefined by default
+			module.children = [];
+			module.webpackPolyfill = 1;
+		}
+		return module;
+	}
+
+
+/***/ },
+/* 65 */
 /***/ function(module, exports, __webpack_require__) {
 
 	var exports = module.exports = function (alg) {
@@ -28480,16 +21383,16 @@ var stellar =
 	  return new Alg()
 	}
 
-	var Buffer = __webpack_require__(40).Buffer
-	var Hash   = __webpack_require__(73)(Buffer)
+	var Buffer = __webpack_require__(34).Buffer
+	var Hash   = __webpack_require__(69)(Buffer)
 
 	exports.sha =
-	exports.sha1 = __webpack_require__(74)(Buffer, Hash)
-	exports.sha256 = __webpack_require__(75)(Buffer, Hash)
+	exports.sha1 = __webpack_require__(70)(Buffer, Hash)
+	exports.sha256 = __webpack_require__(71)(Buffer, Hash)
 
 
 /***/ },
-/* 70 */
+/* 66 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer) {var intSize = 4;
@@ -28527,10 +21430,39 @@ var stellar =
 
 	module.exports = { hash: hash };
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
 
 /***/ },
-/* 71 */
+/* 67 */
+/***/ function(module, exports, __webpack_require__) {
+
+	if (typeof Object.create === 'function') {
+	  // implementation from standard node.js 'util' module
+	  module.exports = function inherits(ctor, superCtor) {
+	    ctor.super_ = superCtor
+	    ctor.prototype = Object.create(superCtor.prototype, {
+	      constructor: {
+	        value: ctor,
+	        enumerable: false,
+	        writable: true,
+	        configurable: true
+	      }
+	    });
+	  };
+	} else {
+	  // old school shim for old browsers
+	  module.exports = function inherits(ctor, superCtor) {
+	    ctor.super_ = superCtor
+	    var TempCtor = function () {}
+	    TempCtor.prototype = superCtor.prototype
+	    ctor.prototype = new TempCtor()
+	    ctor.prototype.constructor = ctor
+	  }
+	}
+
+
+/***/ },
+/* 68 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/* WEBPACK VAR INJECTION */(function(Buffer) {
@@ -28739,24 +21671,13 @@ var stellar =
 
 
 	
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(40).Buffer))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(34).Buffer))
 
 /***/ },
-/* 72 */
+/* 69 */
 /***/ function(module, exports, __webpack_require__) {
 
-	module.exports = function isBuffer(arg) {
-	  return arg && typeof arg === 'object'
-	    && typeof arg.copy === 'function'
-	    && typeof arg.fill === 'function'
-	    && typeof arg.readUInt8 === 'function';
-	}
-
-/***/ },
-/* 73 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var u = __webpack_require__(79)
+	var u = __webpack_require__(72)
 	var write = u.write
 	var fill = u.zeroFill
 
@@ -28857,7 +21778,7 @@ var stellar =
 
 
 /***/ },
-/* 74 */
+/* 70 */
 /***/ function(module, exports, __webpack_require__) {
 
 	/*
@@ -28870,7 +21791,7 @@ var stellar =
 	 */
 	module.exports = function (Buffer, Hash) {
 
-	  var inherits = __webpack_require__(37).inherits
+	  var inherits = __webpack_require__(29).inherits
 
 	  inherits(Sha1, Hash)
 
@@ -29022,7 +21943,7 @@ var stellar =
 
 
 /***/ },
-/* 75 */
+/* 71 */
 /***/ function(module, exports, __webpack_require__) {
 
 	
@@ -29034,10 +21955,10 @@ var stellar =
 	 *
 	 */
 
-	var inherits = __webpack_require__(37).inherits
+	var inherits = __webpack_require__(29).inherits
 	var BE       = false
 	var LE       = true
-	var u        = __webpack_require__(79)
+	var u        = __webpack_require__(72)
 
 	module.exports = function (Buffer, Hash) {
 
@@ -29191,59 +22112,7 @@ var stellar =
 
 
 /***/ },
-/* 76 */
-/***/ function(module, exports, __webpack_require__) {
-
-	module.exports = function() { throw new Error("define cannot be used indirect"); };
-
-
-/***/ },
-/* 77 */
-/***/ function(module, exports, __webpack_require__) {
-
-	module.exports = function(module) {
-		if(!module.webpackPolyfill) {
-			module.deprecate = function() {};
-			module.paths = [];
-			// module.parent = undefined by default
-			module.children = [];
-			module.webpackPolyfill = 1;
-		}
-		return module;
-	}
-
-
-/***/ },
-/* 78 */
-/***/ function(module, exports, __webpack_require__) {
-
-	if (typeof Object.create === 'function') {
-	  // implementation from standard node.js 'util' module
-	  module.exports = function inherits(ctor, superCtor) {
-	    ctor.super_ = superCtor
-	    ctor.prototype = Object.create(superCtor.prototype, {
-	      constructor: {
-	        value: ctor,
-	        enumerable: false,
-	        writable: true,
-	        configurable: true
-	      }
-	    });
-	  };
-	} else {
-	  // old school shim for old browsers
-	  module.exports = function inherits(ctor, superCtor) {
-	    ctor.super_ = superCtor
-	    var TempCtor = function () {}
-	    TempCtor.prototype = superCtor.prototype
-	    ctor.prototype = new TempCtor()
-	    ctor.prototype.constructor = ctor
-	  }
-	}
-
-
-/***/ },
-/* 79 */
+/* 72 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.write = write

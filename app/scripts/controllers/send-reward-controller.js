@@ -66,7 +66,7 @@ sc.controller('SendRewardCtrl', function ($rootScope, $scope, $http, stNetwork, 
     };
 
     // Transactions
-    remote.request_account_tx(params)
+    remote.requestAccountTx(params)
       .on('success', function (data) {
         data.transactions = data.transactions || [];
 

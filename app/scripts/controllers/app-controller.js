@@ -59,7 +59,7 @@ sc.controller('AppCtrl', function($scope, $rootScope, stNetwork, session, $state
 
         reset();
 
-        remote.set_secret(keys.address, keys.secret);
+        remote.setSecret(keys.address, keys.secret);
 
         accountObj = remote.account(keys.address);
 

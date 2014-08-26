@@ -81,7 +81,7 @@ sc.service('transactionHistory', function($rootScope, $q, stNetwork, session, co
   function requestTransactions() {
     var deferred = $q.defer();
 
-    var txRequest = remote.request_account_tx({
+    var txRequest = remote.requestAccountTx({
       'account': session.get('address'),
       'ledger_index_min': -1,
       'ledger_index_max': -1,

@@ -78,7 +78,7 @@ sc.controller('DashboardCtrl', function($rootScope, $scope, $timeout, $state, se
 
     function fetchCurrencies() {
         var remote = stNetwork.remote;
-        var accountLinesRequest = remote.request_account_lines({
+        var accountLinesRequest = remote.requestAccountLines({
             'account': session.get('address')
         });
 
